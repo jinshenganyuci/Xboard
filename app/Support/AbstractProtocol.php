@@ -16,6 +16,8 @@ abstract class AbstractProtocol
      */
     protected $servers;
 
+    protected bool $externalOnly = false;
+
     /**
      * @var string|null 客户端名称
      */
@@ -59,6 +61,8 @@ abstract class AbstractProtocol
     {
         $this->user = $user;
         $this->servers = $servers;
+        $this->externalOnly = count($servers) > 0
+            && collect($servers)->every(fn ($server) => !empty($server['external']));
         $this->clientName = $clientName;
         $this->clientVersion = $clientVersion;
         $this->userAgent = $userAgent;
@@ -83,6 +87,17 @@ abstract class AbstractProtocol
      */
     abstract public function handle();
 
+    /** Only membership expiry is knowable for a shared upstream subscription. */
+    protected function subscriptionUserInfo(): string
+    {
+        $user = $this->user;
+        if ($this->externalOnly) {
+            return $user['expired_at'] ? "expire={$user['expired_at']}" : '';
+        }
+
+        return "upload={$user['u']}; download={$user['d']}; total={$user['transfer_enable']}; expire={$user['expired_at']}";
+    }
+
     /**
      * 根据客户端版本过滤不兼容的服务器
      *
@@ -90,6 +105,16 @@ abstract class AbstractProtocol
      */
     protected function filterServersByVersion()
     {
+        // These exporters have been adapted and verified for imported credentials and settings.
+        // Other client formats retain native nodes without guessing at external compatibility.
+        if (!in_array(static::class, [
+            \App\Protocols\General::class,
+            \App\Protocols\Shadowrocket::class,
+            \App\Protocols\ClashMeta::class,
+            \App\Protocols\SingBox::class,
+        ], true)) {
+            $this->servers = array_values(array_filter($this->servers, fn ($server) => empty($server['external'])));
+        }
         $this->filterByAllowedProtocols();
         $hasGlobalConfig = isset($this->protocolRequirements['*']);
         $hasClientConfig = isset($this->protocolRequirements[$this->clientName]);

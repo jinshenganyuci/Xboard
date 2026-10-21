@@ -5,6 +5,7 @@ namespace App\Http\Controllers\V1\Client;
 use App\Http\Controllers\Controller;
 use App\Models\Server;
 use App\Protocols\General;
+use App\Services\ExternalSubscription\NodeProvider;
 use App\Services\Plugin\HookManager;
 use App\Services\ServerService;
 use App\Services\UserService;
@@ -42,19 +43,25 @@ class ClientController extends Controller
 
         $user = $request->user();
         $userService = new UserService();
+        $externalServers = app(NodeProvider::class)->forUser($user);
 
-        if (!$userService->isAvailable($user)) {
+        if (!$userService->isAvailable($user) && $externalServers === []) {
             HookManager::call('client.subscribe.unavailable');
             return response('', 403, ['Content-Type' => 'text/plain']);
         }
 
-        return $this->doSubscribe($request, $user);
+        return $this->doSubscribe($request, $user, null, $externalServers);
     }
 
-    public function doSubscribe(Request $request, $user, $servers = null)
+    public function doSubscribe(Request $request, $user, $servers = null, ?array $externalServers = null)
     {
         if ($servers === null) {
-            $servers = ServerService::getAvailableServers($user);
+            // External access is based on membership, independently of native traffic quotas.
+            // Merge after native credentials have been generated so upstream secrets survive.
+            $servers = (new UserService())->isAvailable($user)
+                ? ServerService::getAvailableServers($user)
+                : [];
+            $servers = array_merge($servers, $externalServers ?? app(NodeProvider::class)->forUser($user));
             $servers = HookManager::filter('client.subscribe.servers', $servers, $user, $request);
         }
 
@@ -74,6 +81,7 @@ class ClientController extends Controller
 
         $this->setSubscribeInfoToServers($serversFiltered, $user, count($servers) - count($serversFiltered));
         $serversFiltered = $this->addPrefixToServerName($serversFiltered);
+        $serversFiltered = $this->uniqueExternalNames($serversFiltered);
 
         // Instantiate the protocol class with filtered servers and client info
         $protocolInstance = app()->make($protocolClassName, [
@@ -201,6 +209,12 @@ class ClientController extends Controller
         }
         if (!(int) admin_setting('show_info_to_server_enable', 0))
             return;
+        if (collect($servers)->every(fn ($server) => !empty($server['external']))) {
+            // Upstream traffic is shared and cannot be reported as this user's quota.
+            $expiredDate = $user['expired_at'] ? date('Y-m-d', $user['expired_at']) : __('长期有效');
+            array_unshift($servers, array_merge($servers[0], ['name' => "套餐到期：{$expiredDate}"]));
+            return;
+        }
         $useTraffic = $user['u'] + $user['d'];
         $totalTraffic = $user['transfer_enable'];
         $remainingTraffic = Helper::trafficConvert($totalTraffic - $useTraffic);
@@ -231,6 +245,31 @@ class ClientController extends Controller
                 return $server;
             })
             ->all();
+    }
+
+    private function uniqueExternalNames(array $servers): array
+    {
+        // Keep native names stable and reserve them before assigning external tags.
+        $used = [];
+        foreach ($servers as $server) {
+            if (empty($server['external'])) {
+                $used[$server['name']] = true;
+            }
+        }
+        foreach ($servers as &$server) {
+            if (empty($server['external'])) {
+                continue;
+            }
+            $baseName = $server['name'];
+            $suffix = 2;
+            while (isset($used[$server['name']])) {
+                $server['name'] = $baseName . ' #' . $suffix++;
+            }
+            $used[$server['name']] = true;
+        }
+        unset($server);
+
+        return $servers;
     }
 
     private function getPrefixedServerName(array $server): string

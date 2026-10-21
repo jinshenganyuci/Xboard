@@ -10,7 +10,7 @@ use App\Support\AbstractProtocol;
 
 class ClashMeta extends AbstractProtocol
 {
-    public $flags = ['meta', 'verge', 'flclash', 'nekobox', 'clashmetaforandroid'];
+    public $flags = ['meta', 'mihomo', 'verge', 'flclash', 'nekobox', 'clashmetaforandroid'];
     const CUSTOM_TEMPLATE_FILE = 'resources/rules/custom.clashmeta.yaml';
     const CUSTOM_CLASH_TEMPLATE_FILE = 'resources/rules/custom.clash.yaml';
     const DEFAULT_TEMPLATE_FILE = 'resources/rules/default.clash.yaml';
@@ -228,7 +228,7 @@ class ClashMeta extends AbstractProtocol
         $yaml = str_replace('$app_name', admin_setting('app_name', 'XBoard'), $yaml);
         return response($yaml)
             ->header('content-type', 'text/yaml')
-            ->header('subscription-userinfo', "upload={$user['u']}; download={$user['d']}; total={$user['transfer_enable']}; expire={$user['expired_at']}")
+            ->header('subscription-userinfo', $this->subscriptionUserInfo())
             ->header('profile-update-interval', '24')
             ->header('content-disposition', 'attachment;filename*=UTF-8\'\'' . rawurlencode($appName));
     }
@@ -507,6 +507,10 @@ class ClashMeta extends AbstractProtocol
 
         self::appendMultiplex($array, $protocol_settings);
 
+        if ($alpn = data_get($protocol_settings, 'tls_settings.alpn')) {
+            $array['alpn'] = (array) $alpn;
+        }
+
         return $array;
     }
 
@@ -583,6 +587,10 @@ class ClashMeta extends AbstractProtocol
                 break;
         }
 
+        if ($alpn = data_get($protocol_settings, 'tls_settings.alpn')) {
+            $array['alpn'] = (array) $alpn;
+        }
+
         return $array;
     }
 
@@ -623,6 +631,10 @@ class ClashMeta extends AbstractProtocol
                     $array['obfs-password'] = data_get($protocol_settings, 'obfs.password');
                 }
                 break;
+        }
+
+        if ($alpn = data_get($protocol_settings, 'tls.alpn')) {
+            $array['alpn'] = (array) $alpn;
         }
 
         return $array;
