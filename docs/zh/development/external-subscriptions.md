@@ -46,7 +46,7 @@ php artisan external-subscriptions:sync
 
 ### 已有站点使用发布镜像
 
-发布版本使用独立标签，例如 `ghcr.io/jinshenganyuci/xboard:external-v1.0.0`，支持 Linux AMD64 和 ARM64。先确认 GitHub Actions 的对应发布任务成功，首次发布还需要在 GitHub Packages 设置中将镜像设为 Public，才能匿名拉取。
+发布版本使用独立标签，例如 `ghcr.io/jinshenganyuci/xboard:external-v1.0.2`，支持 Linux AMD64 和 ARM64。先确认 GitHub Actions 的对应发布任务成功，首次发布还需要在 GitHub Packages 设置中将镜像设为 Public，才能匿名拉取。
 
 升级前停止容器并备份 `.env`、SQLite 数据目录（包括仍存在的 WAL/SHM）、主题、插件及 Redis 数据卷。已有站点只替换 Compose 的 `image`，保留所有原有挂载和 `APP_KEY`，然后执行：
 

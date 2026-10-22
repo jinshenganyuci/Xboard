@@ -12,8 +12,11 @@ COPY --chown=www:www resources/views/ /www/resources/views/
 COPY --chown=www:www routes/ /www/routes/
 COPY --chown=www:www public/assets/external-subscriptions/ /www/public/assets/external-subscriptions/
 
-RUN composer dump-autoload --no-dev --no-scripts --optimize \
-    && rm -f bootstrap/cache/config.php bootstrap/cache/routes*.php \
+# Preserve the tested vendor autoloader as well as its installed packages.
+# New App classes use PSR-4 fallback; do not rebuild vendor from stale metadata.
+RUN rm -f bootstrap/cache/*.php \
     && rm -f storage/framework/views/*.php \
     && rm -rf /.data \
-    && chown -R www:www vendor/composer bootstrap/cache
+    && php -r '$loader = require "vendor/autoload.php"; if ($loader->isClassMapAuthoritative() || !class_exists(App\Services\ExternalSubscription\NodeProvider::class) || !class_exists(Laravel\Reverb\ReverbServiceProvider::class)) { throw new RuntimeException("Runtime autoloader compatibility failed"); }' \
+    && CACHE_DRIVER=array QUEUE_CONNECTION=sync SESSION_DRIVER=array php artisan list --raw > /dev/null \
+    && chown -R www:www bootstrap/cache
