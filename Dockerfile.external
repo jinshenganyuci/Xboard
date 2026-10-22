@@ -14,4 +14,6 @@ COPY --chown=www:www public/assets/external-subscriptions/ /www/public/assets/ex
 
 RUN composer dump-autoload --no-dev --no-scripts --optimize \
     && rm -f bootstrap/cache/config.php bootstrap/cache/routes*.php \
+    && rm -f storage/framework/views/*.php \
+    && rm -rf /.data \
     && chown -R www:www vendor/composer bootstrap/cache

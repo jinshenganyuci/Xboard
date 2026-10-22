@@ -44,6 +44,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: latest=false
           tags: |
             type=ref,event=tag
             type=sha,prefix=external-sha-,format=long
@@ -84,3 +85,10 @@ jobs:
             echo "Published image source and clean-data checks passed\n";
           '
           printf 'Published image: `%s`\n' "$image" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update latest only after verification
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker buildx imagetools create --tag "${IMAGE_NAME,,}:latest" "${IMAGE_NAME,,}@${IMAGE_DIGEST}"
