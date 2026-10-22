@@ -44,6 +44,26 @@ php artisan external-subscriptions:sync
 
 ## 本地 Docker Compose 测试
 
+### 已有站点使用发布镜像
+
+发布版本使用独立标签，例如 `ghcr.io/jinshenganyuci/xboard:external-v1.0.0`，支持 Linux AMD64 和 ARM64。先确认 GitHub Actions 的对应发布任务成功，首次发布还需要在 GitHub Packages 设置中将镜像设为 Public，才能匿名拉取。
+
+升级前停止容器并备份 `.env`、SQLite 数据目录（包括仍存在的 WAL/SHM）、主题、插件及 Redis 数据卷。已有站点只替换 Compose 的 `image`，保留所有原有挂载和 `APP_KEY`，然后执行：
+
+```bash
+docker compose pull xboard
+docker compose up -d --force-recreate xboard
+docker compose logs --tail=100 xboard
+```
+
+启动会自动新增第三方订阅的两张表，不要再次运行安装命令。打开原后台并检查第三方订阅页面能加载。回退只换回升级前固定的官方镜像并重建容器，保留数据库中的新增表；不要执行 `migrate:rollback` 或 `xboard:rollback`。
+
+镜像版本通过 OCI 标签和镜像 digest 标识，应用内原上游版本信息可能仍显示基础版本。此发布方式统一通过 Compose 换镜像升级，不使用后台源码更新按钮或 `update.sh`。
+
+发布流程由 `external-v*` Git 标签触发，使用 `Dockerfile.external` 在已验证的官方运行时上覆盖功能代码，不重新解析或升级 Composer 依赖。专用 Dockerignore 只允许打包需要的源码目录；本地 `.env`、数据库、日志和订阅测试凭据不进入构建上下文。若后续修改 Composer 依赖，需要先更新运行时和兼容性验证，发布工作流会拒绝直接复用旧依赖。
+
+### 开发测试实例
+
 `compose.external-test.yaml` 用于独立本地测试。它绑定当前源码，采用 SQLite，所有服务合在一个容器内运行，并仅发布到 `127.0.0.1:17001`。
 
 内存限制分两层：

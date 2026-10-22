@@ -1,0 +1,17 @@
+# Keep the exact upstream runtime used in the upgrade/rollback verification.
+# This digest contains both linux/amd64 and linux/arm64 images.
+FROM ghcr.io/cedar2025/xboard@sha256:896e4926e0d7f18d223d58770590c74ab6f05ecb21f1b74ef5357ed20f44c676
+
+WORKDIR /www
+
+# Only application code is copied. Existing dependencies, admin assets and
+# container services come from the pinned, tested upstream image.
+COPY --chown=www:www app/ /www/app/
+COPY --chown=www:www database/migrations/ /www/database/migrations/
+COPY --chown=www:www resources/views/ /www/resources/views/
+COPY --chown=www:www routes/ /www/routes/
+COPY --chown=www:www public/assets/external-subscriptions/ /www/public/assets/external-subscriptions/
+
+RUN composer dump-autoload --no-dev --no-scripts --optimize \
+    && rm -f bootstrap/cache/config.php bootstrap/cache/routes*.php \
+    && chown -R www:www vendor/composer bootstrap/cache
