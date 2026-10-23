@@ -1,0 +1,16 @@
+# Deny everything except the runtime source copied by Dockerfile.external.
+**
+!app/
+!app/**
+!database/
+!database/migrations/
+!database/migrations/**
+!resources/
+!resources/views/
+!resources/views/**
+!routes/
+!routes/**
+!public/
+!public/assets/
+!public/assets/external-subscriptions/
+!public/assets/external-subscriptions/**

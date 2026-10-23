@@ -1,0 +1,122 @@
+name: Publish third-party subscription image
+
+on:
+  push:
+    tags: ["external-v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: external-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check pinned runtime compatibility
+        run: |
+          # This release Dockerfile reuses the base image's Composer vendor.
+          # Any dependency change requires deliberately updating that runtime.
+          git diff --exit-code 4f48e61a2cbc6db5338872b6bdb45ef954ec1256 HEAD -- composer.json composer.lock
+          test -f app/Services/ExternalSubscription/NodeProvider.php
+          test -f database/migrations/2026_10_21_000001_create_external_subscriptions_tables.php
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: latest=false
+          tags: |
+            type=ref,event=tag
+            type=sha,prefix=external-sha-,format=long
+          labels: |
+            org.opencontainers.image.title=Xboard with third-party subscriptions
+            org.opencontainers.image.description=Xboard with administrator-selected third-party subscription nodes
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and publish both architectures
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.external
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Verify published image
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          image="${IMAGE_NAME,,}@${IMAGE_DIGEST}"
+          docker pull "$image"
+          docker run --rm --memory=512m --memory-swap=512m \
+            -e CACHE_DRIVER=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array \
+            --entrypoint php "$image" /www/artisan list --raw > /dev/null
+          docker run --rm --memory=512m --memory-swap=512m --entrypoint php "$image" -r '
+            require "/www/vendor/autoload.php";
+            foreach ([App\Models\ExternalSubscription::class, App\Services\ExternalSubscription\NodeProvider::class] as $class) {
+              if (!class_exists($class)) { throw new RuntimeException("Missing release class"); }
+            }
+            if (file_exists("/www/.env") || file_exists("/.data") || glob("/www/.docker/.data/*.sqlite*")) {
+              throw new RuntimeException("Unexpected environment or local database in release image");
+            }
+            echo "Published image source and clean-data checks passed\n";
+          '
+          printf 'Published image: `%s`\n' "$image" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Test fresh install and real subscription HTTP endpoints
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          trap 'docker rm -f xboard-release-smoke >/dev/null 2>&1 || true' EXIT
+          docker run -d --name xboard-release-smoke --network none \
+            --memory=1536m --memory-swap=1536m --cpus=2 \
+            -e ENABLE_SQLITE=true -e ENABLE_REDIS=true -e RESOURCE_PROFILE=minimal \
+            -e ENABLE_HORIZON=false -e ENABLE_WS_SERVER=false -e docker=true \
+            -e ADMIN_ACCOUNT=release-admin@example.com --entrypoint sh \
+            "${IMAGE_NAME,,}@${IMAGE_DIGEST}" -c '
+              php /www/artisan xboard:install --no-interaction > /tmp/install.log 2>&1 &&
+              grep -qE "^INSTALLED=(1|true)$" /www/.env &&
+              exec /entrypoint.sh /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+            '
+          for attempt in $(seq 1 30); do
+            if docker exec xboard-release-smoke php -r 'exit(@fsockopen("127.0.0.1",7001) ? 0 : 1);'; then
+              break
+            fi
+            sleep 1
+          done
+          docker cp .github/scripts/smoke-external-image.php xboard-release-smoke:/tmp/release-smoke.php
+          docker exec -e RELEASE_SMOKE_ALLOW_WRITE=1 xboard-release-smoke php /tmp/release-smoke.php
+
+      - name: Update latest only after verification
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker buildx imagetools create --tag "${IMAGE_NAME,,}:latest" "${IMAGE_NAME,,}@${IMAGE_DIGEST}"

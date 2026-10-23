@@ -121,7 +121,7 @@ class SingBox extends AbstractProtocol
         return response()
             ->json($this->config)
             ->header('profile-title', 'base64:' . base64_encode($appName))
-            ->header('subscription-userinfo', "upload={$user['u']}; download={$user['d']}; total={$user['transfer_enable']}; expire={$user['expired_at']}")
+            ->header('subscription-userinfo', $this->subscriptionUserInfo())
             ->header('profile-update-interval', '24');
     }
 
@@ -132,49 +132,63 @@ class SingBox extends AbstractProtocol
         return is_array($jsonData) ? $jsonData : json_decode($jsonData, true);
     }
 
+    protected function isCompatible($server)
+    {
+        // Never silently reduce an imported hopping node to its fallback port.
+        if (!empty($server['external']) && $server['type'] === Server::TYPE_HYSTERIA
+            && (isset($server['ports']) || isset($server['protocol_settings']['hop_interval']))
+            && $this->clientName === 'sing-box' && !empty($this->clientVersion)
+            && version_compare($this->clientVersion, '1.11.0', '<')) {
+            return false;
+        }
+
+        return parent::isCompatible($server);
+    }
+
     protected function buildOutbounds()
     {
         $outbounds = $this->config['outbounds'];
+        $servers = $this->uniqueExternalNames($this->servers, array_column($outbounds, 'tag'));
         $proxies = [];
-        foreach ($this->servers as $item) {
+        foreach ($servers as $item) {
             $protocol_settings = $item['protocol_settings'];
             if ($item['type'] === Server::TYPE_SHADOWSOCKS) {
                 $ssConfig = $this->buildShadowsocks($item['password'], $item);
                 $proxies[] = $ssConfig;
             }
             if ($item['type'] === Server::TYPE_TROJAN) {
-                $trojanConfig = $this->buildTrojan($this->user['uuid'], $item);
+                $trojanConfig = $this->buildTrojan($item['password'] ?? $this->user['uuid'], $item);
                 $proxies[] = $trojanConfig;
             }
             if ($item['type'] === Server::TYPE_VMESS) {
-                $vmessConfig = $this->buildVmess($this->user['uuid'], $item);
+                $vmessConfig = $this->buildVmess($item['password'] ?? $this->user['uuid'], $item);
                 $proxies[] = $vmessConfig;
             }
             if (
                 $item['type'] === Server::TYPE_VLESS
-                && in_array(data_get($protocol_settings, 'network'), ['tcp', 'ws', 'grpc', 'http', 'quic', 'httpupgrade'])
+                && in_array(data_get($protocol_settings, 'network'), ['tcp', 'ws', 'grpc', 'http', 'h2', 'quic', 'httpupgrade'])
             ) {
-                $vlessConfig = $this->buildVless($this->user['uuid'], $item);
+                $vlessConfig = $this->buildVless($item['password'] ?? $this->user['uuid'], $item);
                 $proxies[] = $vlessConfig;
             }
             if ($item['type'] === Server::TYPE_HYSTERIA) {
-                $hysteriaConfig = $this->buildHysteria($this->user['uuid'], $item);
+                $hysteriaConfig = $this->buildHysteria($item['password'] ?? $this->user['uuid'], $item);
                 $proxies[] = $hysteriaConfig;
             }
             if ($item['type'] === Server::TYPE_TUIC) {
-                $tuicConfig = $this->buildTuic($this->user['uuid'], $item);
+                $tuicConfig = $this->buildTuic($item['password'] ?? $this->user['uuid'], $item);
                 $proxies[] = $tuicConfig;
             }
             if ($item['type'] === Server::TYPE_ANYTLS) {
-                $anytlsConfig = $this->buildAnyTLS($this->user['uuid'], $item);
+                $anytlsConfig = $this->buildAnyTLS($item['password'] ?? $this->user['uuid'], $item);
                 $proxies[] = $anytlsConfig;
             }
             if ($item['type'] === Server::TYPE_SOCKS) {
-                $socksConfig = $this->buildSocks($this->user['uuid'], $item);
+                $socksConfig = $this->buildSocks($item['password'] ?? $this->user['uuid'], $item);
                 $proxies[] = $socksConfig;
             }
             if ($item['type'] === Server::TYPE_HTTP) {
-                $httpConfig = $this->buildHttp($this->user['uuid'], $item);
+                $httpConfig = $this->buildHttp($item['password'] ?? $this->user['uuid'], $item);
                 $proxies[] = $httpConfig;
             }
         }
@@ -218,6 +232,34 @@ class SingBox extends AbstractProtocol
         $outbounds = array_merge($outbounds, $proxies);
         $this->config['outbounds'] = $outbounds;
         return $outbounds;
+    }
+
+    private function uniqueExternalNames(array $servers, array $reservedTags): array
+    {
+        $used = array_fill_keys($reservedTags, true);
+        $originalNames = [];
+        foreach ($servers as $server) {
+            $originalNames[$server['name']] = true;
+            if (empty($server['external'])) {
+                $used[$server['name']] = true;
+            }
+        }
+        foreach ($servers as &$server) {
+            if (empty($server['external'])) {
+                continue;
+            }
+            $baseName = $server['name'];
+            if (isset($used[$baseName])) {
+                $suffix = 2;
+                do {
+                    $server['name'] = $baseName . ' #' . $suffix++;
+                } while (isset($used[$server['name']]) || isset($originalNames[$server['name']]));
+            }
+            $used[$server['name']] = true;
+        }
+        unset($server);
+
+        return $servers;
     }
 
     /**
@@ -325,6 +367,8 @@ class SingBox extends AbstractProtocol
         // >= 1.13.0: 移除已删除的 block/dns 出站
         if (version_compare($coreVersion, '1.13.0', '>=')) {
             $this->upgradeSpecialOutboundsToActions();
+            $this->upgradeLegacyDns();
+            $this->upgradeLegacyInbounds();
         }
 
         // < 1.11.0: rule action 降级为旧出站; 恢复废弃字段
@@ -357,7 +401,8 @@ class SingBox extends AbstractProtocol
         }
 
         if (empty($this->clientVersion)) {
-            return null;
+            // Unversioned download links target the same modern baseline as wrapper clients.
+            return '1.13.0';
         }
 
         if ($this->clientName === 'sing-box') {
@@ -365,6 +410,124 @@ class SingBox extends AbstractProtocol
         }
 
         return '1.13.0';
+    }
+
+    /** Upgrade the bundled legacy template without rewriting the stored administrator template. */
+    private function upgradeLegacyDns(): void
+    {
+        $servers = [];
+        $rcodeServers = [];
+        $queryOptions = [];
+        $final = null;
+        foreach ($this->config['dns']['servers'] ?? [] as $index => $server) {
+            if (isset($server['type']) || !isset($server['address'])) {
+                $servers[] = $server;
+                continue;
+            }
+            $address = $server['address'];
+            $tag = $server['tag'] ?? (string) $index;
+            if (str_starts_with($address, 'rcode://')) {
+                $code = substr($address, 8);
+                $rcodeServers[$tag] = ['success' => 'NOERROR', 'format_error' => 'FORMERR', 'server_failure' => 'SERVFAIL',
+                    'name_error' => 'NXDOMAIN', 'not_implemented' => 'NOTIMP', 'refused' => 'REFUSED'][$code] ?? strtoupper($code);
+                continue;
+            }
+            if ($address === 'local') {
+                $server['type'] = 'local';
+            } else {
+                $parts = filter_var($address, FILTER_VALIDATE_IP)
+                    ? ['scheme' => 'udp', 'host' => $address]
+                    : parse_url(str_contains($address, '://') ? $address : 'udp://' . $address);
+                if (!$parts || !in_array($parts['scheme'] ?? '', ['udp', 'tcp', 'tls', 'https', 'quic', 'h3'], true) || empty($parts['host'])) {
+                    $servers[] = $server;
+                    continue;
+                }
+                $server['type'] = $parts['scheme'];
+                $server['server'] = trim($parts['host'], '[]');
+                if (isset($parts['port'])) {
+                    $server['server_port'] = $parts['port'];
+                }
+                if (in_array($server['type'], ['https', 'h3'], true) && isset($parts['path'])) {
+                    $server['path'] = $parts['path'] . (isset($parts['query']) ? '?' . $parts['query'] : '');
+                }
+            }
+            if (isset($server['address_resolver'])) {
+                $server['domain_resolver'] = array_filter([
+                    'server' => $server['address_resolver'], 'strategy' => $server['address_strategy'] ?? null,
+                ], fn ($value) => $value !== null);
+            }
+            $queryOptions[$tag] = array_intersect_key($server, array_flip(['strategy', 'client_subnet']));
+            unset($server['address'], $server['address_resolver'], $server['address_strategy'], $server['strategy'], $server['client_subnet']);
+            $servers[] = $server;
+        }
+        if (isset($this->config['dns']['servers'])) {
+            $final = $this->config['dns']['final'] ?? ($this->config['dns']['servers'][0]['tag'] ?? '0');
+            foreach ($queryOptions[$final] ?? [] as $key => $value) {
+                $this->config['dns'][$key] ??= $value;
+            }
+            $this->config['dns']['servers'] = $servers;
+        }
+        $rules = [];
+        foreach ($this->config['dns']['rules'] ?? [] as $rule) {
+            $serverTag = $rule['server'] ?? null;
+            // Only unconditional outbound-resolution rules can become a default resolver.
+            if (isset($rule['outbound'], $serverTag)
+                && (array) $rule['outbound'] === ['any']
+                && array_diff(array_keys($rule), ['outbound', 'server', 'strategy', 'rewrite_ttl', 'client_subnet', 'disable_cache']) === []) {
+                unset($rule['outbound']);
+                $this->config['route']['default_domain_resolver'] ??= array_merge($queryOptions[$serverTag] ?? [], $rule);
+                continue;
+            }
+            if (isset($rcodeServers[$serverTag])) {
+                unset($rule['server']);
+                $rule['action'] = 'predefined';
+                $rule['rcode'] = $rcodeServers[$serverTag];
+            } elseif (isset($queryOptions[$serverTag])) {
+                $rule = array_merge($queryOptions[$serverTag], $rule);
+            }
+            $rules[] = $rule;
+        }
+        if ($final !== null && isset($rcodeServers[$final])) {
+            $rules[] = ['action' => 'predefined', 'rcode' => $rcodeServers[$final]];
+            unset($this->config['dns']['final']);
+        }
+        if ($rules !== [] || isset($this->config['dns']['rules'])) {
+            $this->config['dns']['rules'] = $rules;
+        }
+    }
+
+    private function upgradeLegacyInbounds(): void
+    {
+        $rules = [];
+        $usedTags = array_fill_keys(array_column($this->config['inbounds'] ?? [], 'tag'), true);
+        foreach ($this->config['inbounds'] ?? [] as $index => $inbound) {
+            if (!empty($inbound['sniff']) || !empty($inbound['domain_strategy'])) {
+                if (empty($inbound['tag'])) {
+                    $tag = 'xboard-inbound-' . $index;
+                    while (isset($usedTags[$tag])) {
+                        $tag .= '-';
+                    }
+                    $inbound['tag'] = $tag;
+                    $usedTags[$tag] = true;
+                }
+                if (!empty($inbound['domain_strategy']) && $inbound['domain_strategy'] !== 'as_is') {
+                    $rules[] = ['inbound' => [$inbound['tag']], 'action' => 'resolve', 'strategy' => $inbound['domain_strategy']];
+                }
+                if (!empty($inbound['sniff'])) {
+                    $rule = ['inbound' => [$inbound['tag']], 'action' => 'sniff'];
+                    if (isset($inbound['sniff_timeout'])) {
+                        $rule['timeout'] = $inbound['sniff_timeout'];
+                    }
+                    $rules[] = $rule;
+                }
+            }
+            unset($inbound['domain_strategy'], $inbound['sniff'], $inbound['sniff_timeout'],
+                $inbound['sniff_override_destination'], $inbound['endpoint_independent_nat']);
+            $this->config['inbounds'][$index] = $inbound;
+        }
+        if ($rules !== []) {
+            $this->config['route']['rules'] = array_merge($rules, $this->config['route']['rules'] ?? []);
+        }
     }
 
     /**
@@ -622,6 +785,9 @@ class SingBox extends AbstractProtocol
                     break;
             }
 
+            if ($alpn = data_get($protocol_settings, 'tls_settings.alpn')) {
+                $tlsConfig['alpn'] = (array) $alpn;
+            }
             $array['tls'] = $tlsConfig;
         }
 
@@ -668,6 +834,9 @@ class SingBox extends AbstractProtocol
         }
 
         $this->appendUtls($tlsConfig, $protocol_settings);
+        if ($alpn = data_get($protocol_settings, 'tls_settings.alpn')) {
+            $tlsConfig['alpn'] = (array) $alpn;
+        }
         $array['tls'] = $tlsConfig;
 
         $this->appendMultiplex($array, $protocol_settings);
@@ -690,10 +859,18 @@ class SingBox extends AbstractProtocol
                 'insecure' => (bool) data_get($protocol_settings, 'tls.allow_insecure', false),
             ]
         ];
-        // 支持 1.11.0 版本及以上 `server_ports` 和 `hop_interval` 配置
-        if ($this->supportsFeature('sing-box', '1.11.0')) {
+        // Imported configurations target 1.11+ even when a wrapper or flag omits the core version.
+        if (!empty($server['external']) || $this->supportsFeature('sing-box', '1.11.0')) {
             if (isset($server['ports'])) {
-                $baseConfig['server_ports'] = [str_replace('-', ':', $server['ports'])];
+                $baseConfig['server_ports'] = array_map(
+                    function ($range) {
+                        $range = trim($range);
+                        return str_contains($range, '-') ? str_replace('-', ':', $range) : $range . ':' . $range;
+                    },
+                    explode(',', $server['ports'])
+                );
+                // sing-box accepts either a fixed port or hopping ports, never both.
+                unset($baseConfig['server_port']);
             }
             if (isset($protocol_settings['hop_interval'])) {
                 $baseConfig['hop_interval'] = "{$protocol_settings['hop_interval']}s";
@@ -704,6 +881,9 @@ class SingBox extends AbstractProtocol
             $baseConfig['tls']['server_name'] = $serverName;
         }
         $this->appendEch($baseConfig['tls'], data_get($protocol_settings, 'tls.ech'));
+        if ($alpn = data_get($protocol_settings, 'tls.alpn')) {
+            $baseConfig['tls']['alpn'] = (array) $alpn;
+        }
         $speedConfig = [
             'up_mbps' => data_get($protocol_settings, 'bandwidth.up'),
             'down_mbps' => data_get($protocol_settings, 'bandwidth.down'),

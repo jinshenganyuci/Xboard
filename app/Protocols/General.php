@@ -50,7 +50,7 @@ class General extends AbstractProtocol
         }
         return response(base64_encode($uri))
             ->header('content-type', 'text/plain')
-            ->header('subscription-userinfo', "upload={$user['u']}; download={$user['d']}; total={$user['transfer_enable']}; expire={$user['expired_at']}");
+            ->header('subscription-userinfo', $this->subscriptionUserInfo());
     }
 
     public static function buildShadowsocks($password, $server)
@@ -237,7 +237,14 @@ class General extends AbstractProtocol
                 break;
         }
 
-        $user = $uuid . '@' . Helper::wrapIPv6($host) . ':' . $port;
+        if ($alpn = data_get($protocol_settings, 'tls_settings.alpn')) {
+            $config['alpn'] = implode(',', (array) $alpn);
+        }
+        if (!empty($server['external'])) {
+            $config['security'] = $config['security'] ?: 'none';
+            $config['mode'] = data_get($protocol_settings, 'network_settings.mode', 'gun');
+        }
+        $user = rawurlencode($uuid) . '@' . Helper::wrapIPv6($host) . ':' . $port;
         $query = http_build_query($config);
         $fragment = rawurlencode($name);
         $link = sprintf("vless://%s?%s#%s\r\n", $user, $query, $fragment);
@@ -313,7 +320,11 @@ class General extends AbstractProtocol
             default:
                 break;
         }
-        $query = http_build_query($array);
+        if ($alpn = data_get($protocol_settings, 'tls_settings.alpn')) {
+            $array['alpn'] = implode(',', (array) $alpn);
+        }
+        $query = http_build_query($array, '', '&', PHP_QUERY_RFC3986);
+        $password = rawurlencode($password);
         $addr = Helper::wrapIPv6($server['host']);
 
         $uri = "trojan://{$password}@{$addr}:{$server['port']}?{$query}#{$name}";
@@ -332,10 +343,19 @@ class General extends AbstractProtocol
         }
         $params['insecure'] = data_get($protocol_settings, 'tls.allow_insecure') ? '1' : '0';
 
+        if ($alpn = data_get($protocol_settings, 'tls.alpn')) {
+            $params['alpn'] = implode(',', (array) $alpn);
+        }
         $name = rawurlencode($server['name']);
         $addr = Helper::wrapIPv6($server['host']);
 
         if ($version === 2) {
+            if ($upMbps = data_get($protocol_settings, 'bandwidth.up')) {
+                $params['upmbps'] = $upMbps;
+            }
+            if ($downMbps = data_get($protocol_settings, 'bandwidth.down')) {
+                $params['downmbps'] = $downMbps;
+            }
             if (data_get($protocol_settings, 'obfs.open')) {
                 $params['obfs'] = 'salamander';
                 $params['obfs-password'] = data_get($protocol_settings, 'obfs.password');
@@ -343,9 +363,13 @@ class General extends AbstractProtocol
             if (isset($server['ports'])) {
                 $params['mport'] = $server['ports'];
             }
+            if (!empty($server['external']) && isset($protocol_settings['hop_interval'])) {
+                $params['hop-interval'] = $protocol_settings['hop_interval'];
+            }
 
             $query = http_build_query($params);
-            $uri = "hysteria2://{$password}@{$addr}:{$server['port']}?{$query}#{$name}";
+            $encodedPassword = rawurlencode($password);
+            $uri = "hysteria2://{$encodedPassword}@{$addr}:{$server['port']}?{$query}#{$name}";
         } else {
             $params['protocol'] = 'udp';
             $params['auth'] = $password;

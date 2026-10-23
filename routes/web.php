@@ -73,6 +73,15 @@ Route::get('/', function (Request $request) {
     }
 });
 
+// The page contains no private data; all source/node requests require admin API authentication.
+Route::get('/' . admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))) . '/external-subscriptions', function () {
+    $securePath = admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key'))));
+    return response()->view('admin.external-subscriptions', [
+        'title' => admin_setting('app_name', 'XBoard'),
+        'secure_path' => $securePath,
+    ])->header('Cache-Control', 'no-store')->header('Referrer-Policy', 'same-origin');
+});
+
 //TODO:: 兼容
 Route::get('/' . admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))), function () {
     return view('admin', [
