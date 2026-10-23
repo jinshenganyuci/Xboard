@@ -117,7 +117,8 @@ class DeliveryTest extends TestCase
         $user = $this->user();
         Sanctum::actingAs($user);
         $response = $this->getJson('/api/v1/user/server/fetch')->assertOk();
-        $response->assertJsonCount(1, 'data')->assertJsonPath('data.0.external', true);
+        $response->assertJsonCount(1, 'data')->assertJsonPath('data.0.external', true)
+            ->assertJsonPath('data.0.name', 'Dashboard node');
         $this->assertNull($response->json('data.0.is_online'));
         foreach (['password', 'config', 'host', 'url', 'source_id'] as $field) {
             $this->assertArrayNotHasKey($field, $response->json('data.0'));
@@ -132,8 +133,9 @@ class DeliveryTest extends TestCase
 
     public function test_external_names_cannot_collide_with_native_names_after_merging(): void
     {
-        $node = $this->externalNode('Shared name');
-        $name = 'Shared name〔外部' . $node->id . '〕';
+        $name = 'Shared name';
+        $this->externalNode($name);
+        $this->externalNode($name);
         foreach ([$name, $name . ' #2'] as $nativeName) {
             Server::create([
                 'name' => $nativeName, 'type' => 'trojan', 'host' => 'native.example.com',
@@ -148,7 +150,7 @@ class DeliveryTest extends TestCase
         $response = $this->get($this->subscribeUrl($user))->assertOk();
         $lines = array_filter(explode("\n", trim(base64_decode($response->getContent()))));
         $names = array_map(fn ($line) => rawurldecode(parse_url(trim($line), PHP_URL_FRAGMENT)), $lines);
-        $this->assertSame([$name, $name . ' #2', $name . ' #3'], array_values($names));
+        $this->assertSame([$name, $name . ' #2', $name . ' #3', $name . ' #4'], array_values($names));
         $this->assertStringContainsString('upstream-password', base64_decode($response->getContent()));
     }
 

@@ -148,8 +148,9 @@ class SingBox extends AbstractProtocol
     protected function buildOutbounds()
     {
         $outbounds = $this->config['outbounds'];
+        $servers = $this->uniqueExternalNames($this->servers, array_column($outbounds, 'tag'));
         $proxies = [];
-        foreach ($this->servers as $item) {
+        foreach ($servers as $item) {
             $protocol_settings = $item['protocol_settings'];
             if ($item['type'] === Server::TYPE_SHADOWSOCKS) {
                 $ssConfig = $this->buildShadowsocks($item['password'], $item);
@@ -231,6 +232,34 @@ class SingBox extends AbstractProtocol
         $outbounds = array_merge($outbounds, $proxies);
         $this->config['outbounds'] = $outbounds;
         return $outbounds;
+    }
+
+    private function uniqueExternalNames(array $servers, array $reservedTags): array
+    {
+        $used = array_fill_keys($reservedTags, true);
+        $originalNames = [];
+        foreach ($servers as $server) {
+            $originalNames[$server['name']] = true;
+            if (empty($server['external'])) {
+                $used[$server['name']] = true;
+            }
+        }
+        foreach ($servers as &$server) {
+            if (empty($server['external'])) {
+                continue;
+            }
+            $baseName = $server['name'];
+            if (isset($used[$baseName])) {
+                $suffix = 2;
+                do {
+                    $server['name'] = $baseName . ' #' . $suffix++;
+                } while (isset($used[$server['name']]) || isset($originalNames[$server['name']]));
+            }
+            $used[$server['name']] = true;
+        }
+        unset($server);
+
+        return $servers;
     }
 
     /**

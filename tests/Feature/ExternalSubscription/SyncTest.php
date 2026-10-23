@@ -125,7 +125,8 @@ class SyncTest extends TestCase
         $user = $this->eligibleUser();
         $nodes = $provider->forUser($user);
         $this->assertCount(2, $nodes);
-        $this->assertNotSame($nodes[0]['name'], $nodes[1]['name']);
+        $this->assertSame(['Same', 'Same'], array_column($nodes, 'name'));
+        $this->assertNotSame($nodes[0]['id'], $nodes[1]['id']);
         $this->assertLessThan(0, $nodes[0]['id']);
         foreach ([['banned' => 1], ['expired_at' => time() - 1], ['plan_id' => null]] as $changes) {
             $this->assertSame([], $provider->forUser($this->eligibleUser()->forceFill($changes)));

@@ -225,7 +225,7 @@ try {
             $response = requestLocal('GET', '/api/v1/client/subscribe?' . http_build_query(['token' => $users['active']->token, 'flag' => $format]));
             $delivered = subscriptionNodes($response, $format);
             foreach ($nodes as $index => $node) {
-                $matching = array_values(array_filter($delivered, fn ($item) => str_contains($item['name'], $node->name . '〔外部' . $node->id . '〕')));
+                $matching = array_values(array_filter($delivered, fn ($item) => $item['name'] === $node->name));
                 if (in_array($index, $selection, true)) {
                     verify(count($matching) === 1, 'A selected node is missing or duplicated.');
                     verify($matching[0]['credential'] === $node->config['password'], 'Exporter changed an upstream credential.');

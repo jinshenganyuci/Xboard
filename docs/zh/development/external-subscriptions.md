@@ -7,6 +7,7 @@
 - 用户必须存在、未被封禁、已关联套餐，且套餐未到期；永久有效套餐沿用 Xboard 的永久有效规则。
 - 第三方节点的下发资格不检查 Xboard 的已用流量或剩余流量。自建节点继续使用原有资格规则。
 - 只有同时满足「订阅源已启用、节点已勾选、上游仍存在、格式受支持」的节点才会下发。
+- 下发节点保留上游名称，不追加第三方来源标记；遇到重名时仅追加 ` #2`、` #3` 等序号，以保证客户端配置中的名称唯一。
 - 所有符合资格的用户收到同一组勾选节点，保留上游的 UUID、密码与连接参数。首版不按套餐、用户或用户组分别配置节点。
 - 支持普通 URI 列表、Base64 编码的 URI 列表，以及 Clash YAML 的 `proxies` 节点列表。首版节点协议为 VLESS、Trojan 和 Hysteria2；不支持或不能完整转换的参数会显示为不可勾选，不会悄悄删除关键参数后下发。
 - 首版下发格式为通用订阅（v2rayN / Shadowrocket）、Mihomo / Clash Meta 和 Sing-box / Hiddify。旧版标准 Clash 不支持本次目标协议组合，请使用 Mihomo / Clash Meta。实际客户端也必须支持节点所用协议和参数；旧版本可能过滤不兼容节点。
@@ -46,7 +47,7 @@ php artisan external-subscriptions:sync
 
 ### 已有站点使用发布镜像
 
-发布版本使用独立标签，例如 `ghcr.io/jinshenganyuci/xboard:external-v1.0.2`，支持 Linux AMD64 和 ARM64。先确认 GitHub Actions 的对应发布任务成功，首次发布还需要在 GitHub Packages 设置中将镜像设为 Public，才能匿名拉取。
+发布版本使用独立标签，例如 `ghcr.io/jinshenganyuci/xboard:external-v1.0.3`，支持 Linux AMD64 和 ARM64。发布任务通过启动及订阅检查后会将 `ghcr.io/jinshenganyuci/xboard:latest` 更新为同一镜像。先确认 GitHub Actions 的对应发布任务成功；首次发布若镜像为私有，需要在 GitHub Packages 设置中将镜像设为 Public，才能匿名拉取。
 
 升级前停止容器并备份 `.env`、SQLite 数据目录（包括仍存在的 WAL/SHM）、主题、插件及 Redis 数据卷。已有站点只替换 Compose 的 `image`，保留所有原有挂载和 `APP_KEY`，然后执行：
 

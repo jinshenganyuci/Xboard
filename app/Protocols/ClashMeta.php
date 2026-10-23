@@ -150,6 +150,13 @@ class ClashMeta extends AbstractProtocol
         $template = subscribe_template('clashmeta');
 
         $config = Yaml::parse($template);
+        $reservedNames = ['DIRECT', 'REJECT', 'REJECT-DROP', 'COMPATIBLE', 'PASS', 'PASS-RULE', 'GLOBAL'];
+        foreach (array_merge($config['proxies'] ?? [], $config['proxy-groups'] ?? []) as $item) {
+            if (isset($item['name'])) {
+                $reservedNames[] = $item['name'];
+            }
+        }
+        $servers = $this->uniqueExternalNames($servers, $reservedNames, $appName);
         $proxy = [];
         $proxies = [];
 
@@ -231,6 +238,39 @@ class ClashMeta extends AbstractProtocol
             ->header('subscription-userinfo', $this->subscriptionUserInfo())
             ->header('profile-update-interval', '24')
             ->header('content-disposition', 'attachment;filename*=UTF-8\'\'' . rawurlencode($appName));
+    }
+
+    private function uniqueExternalNames(array $servers, array $reservedNames, string $appName): array
+    {
+        // Names share a namespace with template groups and built-ins. Compare
+        // their final spelling because this exporter substitutes $app_name.
+        $renderName = fn (string $name) => str_replace('$app_name', $appName, $name);
+        $used = array_fill_keys(array_map($renderName, $reservedNames), true);
+        $originalNames = [];
+        foreach ($servers as $server) {
+            $name = $renderName($server['name']);
+            $originalNames[$name] = true;
+            if (empty($server['external'])) {
+                $used[$name] = true;
+            }
+        }
+        foreach ($servers as &$server) {
+            if (empty($server['external'])) {
+                continue;
+            }
+            $baseName = $server['name'];
+            if (isset($used[$renderName($baseName)])) {
+                $suffix = 2;
+                do {
+                    $server['name'] = $baseName . ' #' . $suffix++;
+                    $name = $renderName($server['name']);
+                } while (isset($used[$name]) || isset($originalNames[$name]));
+            }
+            $used[$renderName($server['name'])] = true;
+        }
+        unset($server);
+
+        return $servers;
     }
 
     /**

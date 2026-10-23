@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\ExternalSubscription;
 
+use App\Models\SubscribeTemplate;
 use App\Protocols\ClashMeta;
 use App\Protocols\General;
 use App\Protocols\Shadowrocket;
@@ -114,6 +115,71 @@ class OutputTest extends TestCase
         $sing = json_decode((new SingBox($this->user(), [$node]))->handle()->getContent(), true);
         $outbound = collect($sing['outbounds'])->firstWhere('tag', $node['name']);
         $this->assertSame('public-test-key', $outbound['tls']['reality']['public_key']);
+    }
+
+    public function test_clash_external_names_avoid_template_groups_proxies_and_builtins(): void
+    {
+        $original = subscribe_template('clashmeta');
+        $appName = admin_setting('app_name', 'XBoard');
+        $template = [
+            'proxies' => [ClashMeta::buildTrojan('template-password', array_replace($this->nodes()[1], ['name' => 'Template proxy']))],
+            'proxy-groups' => [
+                ['name' => '$app_name', 'type' => 'select', 'proxies' => ['DIRECT', 'Template proxy']],
+                ['name' => '自动选择', 'type' => 'url-test', 'proxies' => [], 'url' => 'https://example.com', 'interval' => 300],
+            ],
+            'rules' => ['MATCH,$app_name'],
+        ];
+        $names = ['自动选择', '自动选择 #2', '$app_name', $appName . ' #2', 'DIRECT',
+            'Template proxy', 'Shared name', 'Shared name', 'Native name', 'Normal 🇭🇰'];
+        $nodes = array_map(fn ($name) => array_replace($this->nodes()[1], ['name' => $name]), $names);
+        $nodes[] = array_replace($this->nodes()[1], ['name' => 'Native name', 'external' => false]);
+        $expected = ['自动选择 #3', '自动选择 #2', $appName . ' #3', $appName . ' #2', 'DIRECT #2',
+            'Template proxy #2', 'Shared name', 'Shared name #2', 'Native name #2', 'Normal 🇭🇰', 'Native name'];
+
+        try {
+            SubscribeTemplate::setContent('clashmeta', Yaml::dump($template));
+            $config = Yaml::parse((new ClashMeta($this->user(), $nodes))->handle()->getContent());
+            $this->assertSame(array_merge(['Template proxy'], $expected), array_column($config['proxies'], 'name'));
+            $allNames = array_merge(array_column($config['proxies'], 'name'), array_column($config['proxy-groups'], 'name'));
+            $this->assertSame(count($allNames), count(array_unique($allNames)));
+            $this->assertSame(array_merge(['DIRECT', 'Template proxy'], $expected), $config['proxy-groups'][0]['proxies']);
+            $this->assertSame($expected, $config['proxy-groups'][1]['proxies']);
+            $this->assertSame('MATCH,' . $appName, $config['rules'][array_key_last($config['rules'])]);
+        } finally {
+            SubscribeTemplate::setContent('clashmeta', $original);
+        }
+    }
+
+    public function test_sing_box_external_names_avoid_template_tags_and_keep_group_references(): void
+    {
+        $original = subscribe_template('singbox');
+        $template = [
+            'outbounds' => [
+                ['tag' => '节点选择', 'type' => 'selector', 'outbounds' => ['direct']],
+                ['tag' => 'direct', 'type' => 'direct'],
+                ['tag' => 'Template outbound', 'type' => 'direct'],
+                ['tag' => '自动选择', 'type' => 'urltest', 'outbounds' => []],
+            ],
+            'route' => ['rules' => []],
+        ];
+        $names = ['节点选择', '节点选择 #2', 'direct', 'Template outbound',
+            'Shared name', 'Shared name', 'Native name', 'Normal 🇭🇰'];
+        $nodes = array_map(fn ($name) => array_replace($this->nodes()[1], ['name' => $name]), $names);
+        $nodes[] = array_replace($this->nodes()[1], ['name' => 'Native name', 'external' => false]);
+        $expected = ['节点选择 #3', '节点选择 #2', 'direct #2', 'Template outbound #2',
+            'Shared name', 'Shared name #2', 'Native name #2', 'Normal 🇭🇰', 'Native name'];
+
+        try {
+            SubscribeTemplate::setContent('singbox', json_encode($template));
+            $config = json_decode((new SingBox($this->user(), $nodes, 'sing-box', '1.12.0'))->handle()->getContent(), true);
+            $tags = array_column($config['outbounds'], 'tag');
+            $this->assertSame(array_merge(array_column($template['outbounds'], 'tag'), $expected), $tags);
+            $this->assertSame(count($tags), count(array_unique($tags)));
+            $this->assertSame(array_merge(['direct'], $expected), $config['outbounds'][0]['outbounds']);
+            $this->assertSame($expected, $config['outbounds'][3]['outbounds']);
+        } finally {
+            SubscribeTemplate::setContent('singbox', $original);
+        }
     }
 
     public function test_hysteria_hopping_ports_survive_all_formats_and_unversioned_sing_box_clients(): void

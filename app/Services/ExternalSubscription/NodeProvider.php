@@ -24,9 +24,9 @@ class NodeProvider
 
         return $this->query()->get()->map(function (ExternalSubscriptionNode $node) {
             $config = $node->config;
-            // Stable suffixes also keep equal names from different sources distinct.
+            // Preserve upstream display names; subscription merging resolves collisions.
             $config['id'] = -$node->id;
-            $config['name'] = $node->name . '〔外部' . $node->id . '〕';
+            $config['name'] = $node->name;
             $config['external'] = true;
             return $config;
         })->all();
