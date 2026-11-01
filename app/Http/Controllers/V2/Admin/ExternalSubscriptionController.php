@@ -16,7 +16,7 @@ class ExternalSubscriptionController extends Controller
     public function fetch()
     {
         $sources = ExternalSubscription::query()->withCount([
-            'nodes',
+            'nodes' => fn ($query) => $query->where('present', true),
             'nodes as available_nodes_count' => fn ($query) => $query->where('present', true)->where('supported', true),
             'nodes as selected_nodes_count' => fn ($query) => $query->where('selected', true)->where('present', true)->where('supported', true),
         ])->orderBy('id')->get();
@@ -99,7 +99,7 @@ class ExternalSubscriptionController extends Controller
     public function nodes(Request $request)
     {
         $source = $this->source($request);
-        $nodes = $source->nodes()->orderBy('sort_order')->orderBy('id')->get([
+        $nodes = $source->nodes()->where('present', true)->orderBy('sort_order')->orderBy('id')->get([
             'id', 'source_id', 'name', 'type', 'selected', 'present', 'supported', 'error', 'sort_order',
         ]);
 

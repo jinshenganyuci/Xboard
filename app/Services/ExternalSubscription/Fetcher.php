@@ -123,7 +123,8 @@ class Fetcher
                 CURLOPT_ENCODING => 'gzip,deflate',
                 // Request the common URI subscription format; some upstreams reject unknown UAs.
                 CURLOPT_USERAGENT => 'v2rayN/7.0',
-                CURLOPT_HTTPHEADER => ['Accept: text/plain, application/yaml, text/yaml'],
+                // Revalidate cached upstream responses without changing signed/token URLs.
+                CURLOPT_HTTPHEADER => ['Accept: text/plain, application/yaml, text/yaml', 'Cache-Control: no-cache', 'Pragma: no-cache'],
                 CURLOPT_HEADERFUNCTION => function ($handle, string $header) use (&$location, &$overLimit) {
                     if (stripos($header, 'Location:') === 0) {
                         $location = trim(substr($header, 9));

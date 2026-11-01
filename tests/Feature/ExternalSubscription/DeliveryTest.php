@@ -8,6 +8,8 @@ use App\Models\Server;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\DataProvider;
+use Symfony\Component\Yaml\Yaml;
 use Tests\TestCase;
 
 class DeliveryTest extends TestCase
@@ -39,7 +41,7 @@ class DeliveryTest extends TestCase
         $this->externalNode('Private node');
         foreach ([['plan_id' => null], ['expired_at' => time() - 1], ['banned' => true]] as $attributes) {
             $user = $this->user($attributes);
-            $response = $this->get($this->subscribeUrl($user));
+            $response = $this->get($this->subscribeUrl($user))->assertStatus(403);
             $this->assertStringNotContainsString('upstream-password', base64_decode($response->getContent()) ?: '');
             $this->assertStringNotContainsString('upstream-password', $response->getContent());
         }
@@ -71,7 +73,60 @@ class DeliveryTest extends TestCase
             $this->assertStringNotContainsString($name, $body);
         }
         $selected->update(['selected' => false]);
-        $this->get($this->subscribeUrl($user))->assertStatus(403);
+        $this->assertSame('', $this->get($this->subscribeUrl($user))->assertOk()->getContent());
+    }
+
+    public static function supportedFormats(): array
+    {
+        return [['general'], ['shadowrocket'], ['mihomo'], ['sing-box']];
+    }
+
+    #[DataProvider('supportedFormats')]
+    public function test_last_node_removal_returns_a_successful_empty_subscription(string $format): void
+    {
+        $node = $this->externalNode('Deleted external node');
+        $user = $this->user();
+        $url = $this->subscribeUrl($user, $format);
+        $before = $this->get($url)->assertOk()->getContent();
+        $this->assertStringContainsString('upstream-password', in_array($format, ['general', 'shadowrocket']) ? base64_decode($before) : $before);
+
+        $node->delete();
+        $response = $this->get($url)->assertOk();
+        $body = in_array($format, ['general', 'shadowrocket']) ? base64_decode($response->getContent()) : $response->getContent();
+        foreach (['Deleted external node', 'upstream-password', 'upstream.example.com', $user->uuid] as $removedValue) {
+            $this->assertStringNotContainsString($removedValue, $body);
+        }
+        if ($format === 'general') {
+            $this->assertSame('', $body);
+            $this->assertStringNotContainsString('total=', $response->headers->get('subscription-userinfo', ''));
+        } elseif ($format === 'shadowrocket') {
+            $this->assertStringStartsWith('STATUS=Expires:', $body);
+            $this->assertStringNotContainsString('://', $body);
+            $this->assertStringNotContainsString('TOT:', $body);
+        } elseif ($format === 'mihomo') {
+            $config = Yaml::parse($body);
+            $this->assertSame([], $config['proxies']);
+            $this->assertSame([], $config['proxy-groups']);
+            $this->assertSame(['MATCH,REJECT'], $config['rules']);
+        } else {
+            $config = json_decode($body, true);
+            $this->assertSame([], $config['outbounds']);
+            $this->assertSame([['action' => 'reject']], $config['route']['rules']);
+            $this->assertArrayNotHasKey('rule_set', $config['route']);
+        }
+    }
+
+    #[DataProvider('supportedFormats')]
+    public function test_empty_external_subscriptions_still_require_active_membership(string $format): void
+    {
+        $node = $this->externalNode('Removed');
+        $node->delete();
+        foreach ([['plan_id' => null], ['expired_at' => time() - 1], ['banned' => true]] as $attributes) {
+            $this->get($this->subscribeUrl($this->user($attributes), $format))->assertStatus(403);
+        }
+        $this->get($this->subscribeUrl($this->user(['expired_at' => null]), $format))->assertOk();
+        $node->source->update(['enabled' => false]);
+        $this->get($this->subscribeUrl($this->user(), $format))->assertStatus(403);
     }
 
     public function test_old_and_short_subscription_urls_keep_upstream_credentials_for_different_users(): void
@@ -182,8 +237,8 @@ class DeliveryTest extends TestCase
         ], $attributes));
     }
 
-    private function subscribeUrl(User $user): string
+    private function subscribeUrl(User $user, string $format = 'general'): string
     {
-        return '/api/v1/client/subscribe?token=' . $user->token . '&flag=general';
+        return '/api/v1/client/subscribe?token=' . $user->token . '&flag=' . rawurlencode($format);
     }
 }

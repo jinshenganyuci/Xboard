@@ -125,6 +125,29 @@ class AdminTest extends TestCase
         }
     }
 
+    public function test_legacy_absent_nodes_are_hidden_from_lists_and_all_source_counts(): void
+    {
+        Sanctum::actingAs($this->user(true));
+        $source = $this->source(['enabled' => true]);
+        $present = $this->node($source, ['selected' => true, 'name' => '当前节点']);
+        $unsupported = $this->node($source, ['supported' => false, 'name' => '当前不支持的节点']);
+        $this->node($source, ['present' => false, 'selected' => true, 'name' => '历史已移除节点']);
+
+        $this->getJson($this->endpoint('fetch'))->assertOk()
+            ->assertJsonPath('data.0.nodes_count', 2)
+            ->assertJsonPath('data.0.available_nodes_count', 1)
+            ->assertJsonPath('data.0.selected_nodes_count', 1);
+
+        $this->getJson($this->endpoint('nodes?id=' . $source->id))->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.id', $present->id)
+            ->assertJsonPath('data.1.id', $unsupported->id)
+            ->assertJsonMissing(['name' => '历史已移除节点']);
+
+        // Reading the management API does not mutate historical rows.
+        $this->assertSame(3, $source->nodes()->count());
+    }
+
     public function test_selection_replaces_the_full_set_and_can_be_cleared(): void
     {
         Sanctum::actingAs($this->user(true));

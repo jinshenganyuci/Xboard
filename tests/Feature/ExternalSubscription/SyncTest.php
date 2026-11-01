@@ -12,6 +12,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -55,17 +56,68 @@ class SyncTest extends TestCase
         $this->assertSame(3, $source->nodes()->count());
     }
 
-    public function test_removed_nodes_are_marked_absent_and_not_distributed(): void
+    public static function emptySnapshots(): array
+    {
+        return [
+            'empty body' => [''],
+            'whitespace body' => [" \r\n\t"],
+            'base64 whitespace' => [base64_encode("\r\n")],
+            'empty Clash proxies' => ['proxies: []'],
+        ];
+    }
+
+    #[DataProvider('emptySnapshots')]
+    public function test_removed_nodes_are_deleted_and_returning_nodes_require_selection(string $emptyBody): void
     {
         $source = $this->source();
         $this->syncBody($source, "trojan://pass@example.com:443#A\nhy2://pass@other.example.com:443#B");
         $source->nodes()->update(['selected' => true]);
-        $counts = $this->syncBody($source, 'hy2://pass@other.example.com:443#B');
+        $originalA = $source->nodes()->where('name', 'A')->firstOrFail();
+        $originalB = $source->nodes()->where('name', 'B')->firstOrFail();
+        $counts = $this->syncBody($source, 'hy2://rotated@other.example.com:443#B');
         $this->assertSame(1, $counts['removed']);
-        $this->assertFalse($source->nodes()->where('name', 'A')->firstOrFail()->present);
+        $this->assertSame(1, $source->nodes()->count());
+        $this->assertFalse($source->nodes()->whereKey($originalA->id)->exists());
+        $this->assertTrue($originalB->refresh()->selected);
+        $this->assertSame('rotated', $originalB->config['password']);
         $nodes = (new NodeProvider())->forUser($this->eligibleUser());
         $this->assertCount(1, $nodes);
-        $this->assertStringStartsWith('B', $nodes[0]['name']);
+        $this->assertSame('B', $nodes[0]['name']);
+
+        $source->update(['last_error' => 'Previous failure']);
+        $counts = $this->syncBody($source, $emptyBody);
+        $this->assertSame(0, $counts['total']);
+        $this->assertSame(1, $counts['removed']);
+        $this->assertSame(0, $source->nodes()->count());
+        $this->assertSame([], (new NodeProvider())->forUser($this->eligibleUser()));
+        $this->assertNull($source->refresh()->last_error);
+        $this->assertNotNull($source->last_synced_at);
+
+        $counts = $this->syncBody($source, 'trojan://new@example.com:443#A');
+        $returned = $source->nodes()->firstOrFail();
+        $this->assertSame(1, $counts['added']);
+        $this->assertNotSame($originalA->id, $returned->id);
+        $this->assertTrue($returned->present);
+        $this->assertFalse($returned->selected);
+        $this->assertSame([], (new NodeProvider())->forUser($this->eligibleUser()));
+    }
+
+    public function test_success_cleans_legacy_absent_rows_without_restoring_old_selection(): void
+    {
+        $source = $this->source();
+        $this->syncBody($source, "trojan://pass@example.com:443#A\nhy2://pass@other.example.com:443#B\ntrojan://pass@removed.example.com:443#C");
+        $source->nodes()->update(['selected' => true]);
+        $source->nodes()->whereIn('name', ['A', 'C'])->update(['present' => false]);
+
+        $counts = $this->syncBody($source, "trojan://rotated@example.com:443#A\nhy2://pass@other.example.com:443#B");
+        $this->assertSame(1, $counts['removed']);
+        $this->assertFalse($source->nodes()->where('name', 'C')->exists());
+        $returned = $source->nodes()->where('name', 'A')->firstOrFail();
+        $this->assertTrue($returned->present);
+        $this->assertFalse($returned->selected);
+        $this->assertSame('rotated', $returned->config['password']);
+        $this->assertTrue($source->nodes()->where('name', 'B')->firstOrFail()->selected);
+        $this->assertSame(['B'], array_column((new NodeProvider())->forUser($this->eligibleUser()), 'name'));
     }
 
     public function test_failure_keeps_last_good_snapshot_and_redacts_errors(): void
@@ -86,19 +138,36 @@ class SyncTest extends TestCase
         $source->refresh();
         $this->assertSame($before, $source->last_synced_at->toIso8601String());
         $this->assertStringNotContainsString('private-token', $source->last_error);
+        $this->assertSame(1, $source->nodes()->count());
         $this->assertSame('good-password', $source->nodes()->firstOrFail()->config['password']);
         $this->assertCount(1, (new NodeProvider())->forUser($this->eligibleUser()));
     }
 
-    public function test_invalid_html_does_not_replace_snapshot(): void
+    public static function invalidSnapshots(): array
+    {
+        return [
+            ['<html>not authorized</html>'],
+            ['proxies: ['],
+            ['proxies: null'],
+            ['message: unavailable'],
+        ];
+    }
+
+    #[DataProvider('invalidSnapshots')]
+    public function test_invalid_content_does_not_replace_snapshot(string $body): void
     {
         $source = $this->source();
         $this->syncBody($source, 'trojan://pass@example.com:443#A');
+        $source->nodes()->update(['selected' => true]);
+        $node = $source->nodes()->firstOrFail();
         try {
-            $this->syncBody($source, '<html>not authorized</html>');
-            $this->fail('HTML was accepted.');
+            $this->syncBody($source, $body);
+            $this->fail('Invalid content was accepted.');
         } catch (RuntimeException $e) {
-            $this->assertTrue($source->nodes()->firstOrFail()->present);
+            $this->assertSame(1, $source->nodes()->count());
+            $this->assertTrue($node->refresh()->present);
+            $this->assertTrue($node->selected);
+            $this->assertCount(1, (new NodeProvider())->forUser($this->eligibleUser()));
         }
     }
 

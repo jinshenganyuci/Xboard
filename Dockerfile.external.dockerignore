@@ -14,3 +14,7 @@
 !public/assets/
 !public/assets/external-subscriptions/
 !public/assets/external-subscriptions/**
+!.docker/
+!.docker/external-subscriptions/
+!.docker/external-subscriptions/worker.sh
+!.docker/external-subscriptions/supervisor.conf

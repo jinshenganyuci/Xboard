@@ -4,6 +4,8 @@ FROM ghcr.io/cedar2025/xboard@sha256:896e4926e0d7f18d223d58770590c74ab6f05ecb21f
 
 WORKDIR /www
 
+ENV ENABLE_EXTERNAL_SUBSCRIPTIONS_SYNC=true
+
 # Only application code is copied. Existing dependencies, admin assets and
 # container services come from the pinned, tested upstream image.
 COPY --chown=www:www app/ /www/app/
@@ -11,6 +13,13 @@ COPY --chown=www:www database/migrations/ /www/database/migrations/
 COPY --chown=www:www resources/views/ /www/resources/views/
 COPY --chown=www:www routes/ /www/routes/
 COPY --chown=www:www public/assets/external-subscriptions/ /www/public/assets/external-subscriptions/
+COPY --chown=www:www .docker/external-subscriptions/worker.sh /usr/local/bin/xboard-external-subscriptions-worker
+COPY .docker/external-subscriptions/supervisor.conf /tmp/xboard-external-subscriptions-supervisor.conf
+
+# Preserve upstream services and add only the independent subscription refresher.
+RUN chmod 755 /usr/local/bin/xboard-external-subscriptions-worker \
+    && cat /tmp/xboard-external-subscriptions-supervisor.conf >> /etc/supervisor/conf.d/supervisord.conf \
+    && rm /tmp/xboard-external-subscriptions-supervisor.conf
 
 # Preserve the tested vendor autoloader as well as its installed packages.
 # New App classes use PSR-4 fallback; do not rebuild vendor from stale metadata.

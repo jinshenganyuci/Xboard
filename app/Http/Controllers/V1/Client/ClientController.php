@@ -43,18 +43,21 @@ class ClientController extends Controller
 
         $user = $request->user();
         $userService = new UserService();
-        $externalServers = app(NodeProvider::class)->forUser($user);
+        $provider = app(NodeProvider::class);
+        $externalAccess = $provider->canSubscribe($user);
+        $externalServers = $provider->forUser($user);
 
-        if (!$userService->isAvailable($user) && $externalServers === []) {
+        if (!$userService->isAvailable($user) && !$externalAccess) {
             HookManager::call('client.subscribe.unavailable');
             return response('', 403, ['Content-Type' => 'text/plain']);
         }
 
-        return $this->doSubscribe($request, $user, null, $externalServers);
+        return $this->doSubscribe($request, $user, null, $externalServers, $externalAccess);
     }
 
-    public function doSubscribe(Request $request, $user, $servers = null, ?array $externalServers = null)
+    public function doSubscribe(Request $request, $user, $servers = null, ?array $externalServers = null, ?bool $externalAccess = null)
     {
+        $externalAccess ??= app(NodeProvider::class)->canSubscribe($user);
         if ($servers === null) {
             // External access is based on membership, independently of native traffic quotas.
             // Merge after native credentials have been generated so upstream secrets survive.
@@ -89,7 +92,9 @@ class ClientController extends Controller
             'servers' => $serversFiltered,
             'clientName' => $clientInfo['name'] ?? null,
             'clientVersion' => $clientInfo['version'] ?? null,
-            'userAgent' => $clientInfo['flag'] ?? null
+            'userAgent' => $clientInfo['flag'] ?? null,
+            // An empty external snapshot is a successful update, not an expired subscription.
+            'externalOnly' => $serversFiltered === [] && $externalAccess ? true : null,
         ]);
 
         return $protocolInstance->handle();

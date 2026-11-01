@@ -3,6 +3,7 @@
 namespace Tests\Unit\ExternalSubscription;
 
 use App\Services\ExternalSubscription\Parser;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
@@ -140,10 +141,48 @@ class ParserTest extends TestCase
         $this->assertFalse($node['supported']);
     }
 
-    public function test_empty_or_broken_response_is_a_sync_failure(): void
+    public static function emptySnapshots(): array
+    {
+        return [
+            'empty body' => [''],
+            'whitespace body' => [" \t\r\n\v\f"],
+            'BOM and whitespace' => ["\xEF\xBB\xBF \n"],
+            'base64 whitespace' => [base64_encode(" \r\n\t")],
+            'unpadded base64 whitespace' => [rtrim(base64_encode("\n"), '=')],
+            'empty Clash proxies' => ["proxies: []\n"],
+            'empty JSON proxies array' => ['{"proxies": []}'],
+            'base64 empty JSON proxies array' => [base64_encode('{"proxies": []}')],
+        ];
+    }
+
+    #[DataProvider('emptySnapshots')]
+    public function test_valid_empty_subscription_is_an_empty_snapshot(string $body): void
+    {
+        $this->assertSame([], (new Parser())->parse($body));
+    }
+
+    public static function invalidSnapshots(): array
+    {
+        return [
+            'HTML' => ['<html>upstream unavailable</html>'],
+            'broken YAML' => ['proxies: ['],
+            'missing proxies' => ['message: unauthorized'],
+            'null proxies' => ['proxies: null'],
+            'scalar proxies' => ['proxies: unavailable'],
+            'empty YAML proxies mapping' => ['proxies: {}'],
+            'empty JSON proxies object' => ['{"proxies": {}}'],
+            'base64 empty JSON proxies object' => [base64_encode('{"proxies": {}}')],
+            'invalid base64' => ['===='],
+            'binary body' => ["\0"],
+            'base64 binary body' => [base64_encode("\0")],
+        ];
+    }
+
+    #[DataProvider('invalidSnapshots')]
+    public function test_broken_response_is_still_a_sync_failure(string $body): void
     {
         $this->expectException(RuntimeException::class);
-        (new Parser())->parse('<html>upstream unavailable</html>');
+        (new Parser())->parse($body);
     }
 
     public function test_body_size_is_bounded(): void

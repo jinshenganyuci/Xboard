@@ -220,6 +220,89 @@ class OutputTest extends TestCase
         }
     }
 
+    public function test_empty_external_clash_configuration_discards_template_proxies_and_direct_routes(): void
+    {
+        $original = subscribe_template('clashmeta');
+        $template = [
+            'mixed-port' => 7901, 'redir-port' => 7902, 'tproxy-port' => 7903, 'mode' => 'global',
+            'authentication' => ['local-user:local-password'],
+            'tun' => ['enable' => true, 'stack' => 'mixed', 'auto-route' => true, 'auto-detect-interface' => true,
+                'route-address-set' => ['Old rules'], 'route-exclude-address-set' => ['Old rules']],
+            'proxies' => [ClashMeta::buildTrojan('deleted-template-secret', array_replace($this->nodes()[1], ['name' => 'Deleted template node']))],
+            'proxy-groups' => [['name' => 'Old group', 'type' => 'url-test', 'proxies' => ['Deleted template node']]],
+            'proxy-providers' => ['Old provider' => ['type' => 'http', 'url' => 'https://deleted.example.com/feed']],
+            'rule-providers' => ['Old rules' => ['type' => 'http', 'behavior' => 'ipcidr', 'url' => 'https://deleted.example.com/rules']],
+            'dns' => ['enable' => true, 'nameserver' => ['https://dns.example.com/dns-query#Old group']],
+            'rules' => ['MATCH,DIRECT'],
+        ];
+        try {
+            SubscribeTemplate::setContent('clashmeta', Yaml::dump($template));
+            $response = (new ClashMeta($this->user(), [], externalOnly: true))->handle();
+            $config = Yaml::parse($response->getContent());
+            $this->assertSame(7901, $config['mixed-port']);
+            $this->assertSame(7902, $config['redir-port']);
+            $this->assertSame(7903, $config['tproxy-port']);
+            $this->assertSame(['local-user:local-password'], $config['authentication']);
+            $this->assertSame(['enable' => true, 'stack' => 'mixed', 'auto-route' => true, 'auto-detect-interface' => true], $config['tun']);
+            $this->assertSame('rule', $config['mode']);
+            $this->assertSame([], $config['proxies']);
+            $this->assertSame([], $config['proxy-groups']);
+            $this->assertSame(['MATCH,REJECT'], $config['rules']);
+            $this->assertArrayNotHasKey('dns', $config);
+            $this->assertArrayNotHasKey('proxy-providers', $config);
+            $this->assertArrayNotHasKey('rule-providers', $config);
+            foreach (['Deleted template node', 'deleted-template-secret', 'deleted.example.com', 'Old group'] as $removedValue) {
+                $this->assertStringNotContainsString($removedValue, $response->getContent());
+            }
+            $this->assertStringNotContainsString('total=', $response->headers->get('subscription-userinfo', ''));
+        } finally {
+            SubscribeTemplate::setContent('clashmeta', $original);
+        }
+    }
+
+    public function test_empty_external_sing_box_configuration_blocks_traffic_across_versions(): void
+    {
+        $original = subscribe_template('singbox');
+        $template = json_decode(file_get_contents(base_path(SingBox::DEFAULT_TEMPLATE_FILE)), true);
+        $template['outbounds'][] = ['tag' => 'Deleted template node', 'type' => 'trojan',
+            'server' => 'deleted.example.com', 'server_port' => 443, 'password' => 'deleted-template-secret'];
+        $template['dns']['servers'][0]['detour'] = 'Deleted template node';
+        $template['inbounds'][0]['route_address_set'] = ['geosite-cn'];
+        $template['inbounds'][0]['route_exclude_address_set'] = ['geoip-cn'];
+        $template['inbounds'][1]['detour'] = 'Deleted inbound';
+        try {
+            SubscribeTemplate::setContent('singbox', json_encode($template));
+            foreach ([null, '1.13.0', '1.12.0', '1.10.7', '1.9.7'] as $version) {
+                $response = (new SingBox($this->user(), [], 'sing-box', $version, externalOnly: true))->handle();
+                $config = json_decode($response->getContent(), true);
+                if ($version !== null && version_compare($version, '1.11.0', '<')) {
+                    $this->assertSame([['type' => 'block', 'tag' => 'block']], $config['outbounds']);
+                    $this->assertSame([['outbound' => 'block']], $config['route']['rules']);
+                } else {
+                    $this->assertSame([], $config['outbounds']);
+                    $this->assertSame([['action' => 'reject']], $config['route']['rules']);
+                }
+                $this->assertSame('local', $config['dns']['final']);
+                $this->assertCount(1, $config['dns']['servers']);
+                $this->assertArrayNotHasKey('detour', $config['dns']['servers'][0]);
+                $this->assertArrayNotHasKey('rule_set', $config['route']);
+                $this->assertArrayNotHasKey('final', $config['route']);
+                $this->assertCount(count($template['inbounds']), $config['inbounds']);
+                foreach ($config['inbounds'] as $inbound) {
+                    foreach (['detour', 'domain_strategy', 'sniff', 'route_address_set', 'route_exclude_address_set'] as $field) {
+                        $this->assertArrayNotHasKey($field, $inbound);
+                    }
+                }
+                foreach (['Deleted template node', 'deleted-template-secret', 'deleted.example.com', '节点选择', 'geosite-cn', 'geoip-cn'] as $removedValue) {
+                    $this->assertStringNotContainsString($removedValue, $response->getContent());
+                }
+                $this->assertStringNotContainsString('total=', $response->headers->get('subscription-userinfo', ''));
+            }
+        } finally {
+            SubscribeTemplate::setContent('singbox', $original);
+        }
+    }
+
     public function test_sing_box_modern_and_unversioned_clients_migrate_the_default_template(): void
     {
         $template = json_decode(file_get_contents(base_path(SingBox::DEFAULT_TEMPLATE_FILE)), true);

@@ -114,6 +114,32 @@ jobs:
           docker cp .github/scripts/smoke-external-image.php xboard-release-smoke:/tmp/release-smoke.php
           docker exec -e RELEASE_SMOKE_ALLOW_WRITE=1 xboard-release-smoke php /tmp/release-smoke.php
 
+      - name: Verify automatic removal without a web server
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          trap 'docker rm -f xboard-worker-smoke >/dev/null 2>&1 || true; docker network rm xboard-worker-smoke >/dev/null 2>&1 || true' EXIT
+          docker network create --internal --subnet 11.254.233.0/24 xboard-worker-smoke
+          docker run -d --name xboard-worker-smoke --network xboard-worker-smoke --ip 11.254.233.2 \
+            --memory=1536m --memory-swap=1536m --cpus=2 \
+            -e ENABLE_SQLITE=true -e ENABLE_REDIS=true -e RESOURCE_PROFILE=minimal \
+            -e ENABLE_WEB=false -e ENABLE_CADDY=false -e ENABLE_HORIZON=false -e ENABLE_WS_SERVER=false \
+            -e docker=true -e ADMIN_ACCOUNT=release-worker@example.com --entrypoint sh \
+            "${IMAGE_NAME,,}@${IMAGE_DIGEST}" -c '
+              php /www/artisan xboard:install --no-interaction > /tmp/install.log 2>&1 &&
+              grep -qE "^INSTALLED=(1|true)$" /www/.env &&
+              exec /entrypoint.sh /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+            '
+          for attempt in $(seq 1 30); do
+            if docker exec xboard-worker-smoke redis-cli -s /data/redis.sock ping | grep -q PONG; then
+              break
+            fi
+            sleep 1
+          done
+          docker cp .github/scripts/smoke-external-worker.php xboard-worker-smoke:/tmp/release-worker-smoke.php
+          docker exec -e RELEASE_SMOKE_ALLOW_WRITE=1 xboard-worker-smoke php /tmp/release-worker-smoke.php
+
       - name: Update latest only after verification
         env:
           IMAGE_NAME: ghcr.io/${{ github.repository }}

@@ -54,6 +54,27 @@ class FetcherTest extends TestCase
         $this->assertSame(0, $fetcher->lookups);
     }
 
+    public function test_http_200_empty_response_reaches_the_snapshot_parser(): void
+    {
+        $fetcher = new FakeExternalFetcher();
+        $fetcher->responses = [['status' => 200, 'location' => null, 'body' => '']];
+        $this->assertSame('', $fetcher->fetch('https://example.com/feed'));
+    }
+
+    public static function nonSuccessfulStatuses(): array
+    {
+        return array_map(fn ($status) => [$status], [204, 304, 401, 403, 429, 500]);
+    }
+
+    #[DataProvider('nonSuccessfulStatuses')]
+    public function test_non_200_empty_responses_cannot_clear_a_snapshot(int $status): void
+    {
+        $fetcher = new FakeExternalFetcher();
+        $fetcher->responses = [['status' => $status, 'location' => null, 'body' => '']];
+        $this->expectException(RuntimeException::class);
+        $fetcher->fetch('https://example.com/feed');
+    }
+
     public function test_mixed_private_and_public_dns_answers_are_rejected(): void
     {
         $fetcher = new FakeExternalFetcher();

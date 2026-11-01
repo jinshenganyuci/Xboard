@@ -6,7 +6,7 @@
   <meta name="referrer" content="same-origin">
   <title>第三方订阅 · {{ $title }}</title>
   <link rel="stylesheet" href="/assets/external-subscriptions/app.css?v=1">
-  <script defer src="/assets/external-subscriptions/app.js?v=1"></script>
+  <script defer src="/assets/external-subscriptions/app.js?v=2"></script>
 </head>
 <body data-api-base="/api/v2/{{ $secure_path }}/external-subscription">
   <header class="topbar">
@@ -15,7 +15,7 @@
   </header>
   <main>
     <section class="page-heading">
-      <div><p class="eyebrow">SUBSCRIPTION SOURCES</p><h1>第三方订阅</h1><p class="subheading">接入订阅，选好节点，再向有效套餐用户下发。</p></div>
+      <div><p class="eyebrow">SUBSCRIPTION SOURCES</p><h1>第三方订阅</h1><p class="subheading">接入订阅，选好节点，再向有效套餐用户下发。已启用的订阅源每 5 分钟自动同步。</p></div>
       <button id="add-source" class="button primary" hidden><span aria-hidden="true">＋</span> 添加订阅源</button>
     </section>
 
@@ -44,7 +44,7 @@
         <aside class="sources-panel card">
           <div class="panel-heading"><h2>订阅源</h2><button id="reload-sources" class="text-button">刷新</button></div>
           <div id="sources-list"></div>
-          <p class="aside-note">上游地址仅在添加或修改时输入，保存后不再回显。</p>
+          <p class="aside-note">列表每 30 秒自动刷新；编辑或有未保存勾选时暂停。上游已移除的节点不再显示或下发。</p>
         </aside>
 
         <section class="nodes-panel card">

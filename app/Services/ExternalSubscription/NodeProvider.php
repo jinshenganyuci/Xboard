@@ -2,12 +2,18 @@
 
 namespace App\Services\ExternalSubscription;
 
+use App\Models\ExternalSubscription;
 use App\Models\ExternalSubscriptionNode;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 
 class NodeProvider
 {
+    public function canSubscribe(User $user): bool
+    {
+        return $user->isActive() && ExternalSubscription::where('enabled', true)->exists();
+    }
+
     private function query(): Builder
     {
         return ExternalSubscriptionNode::query()

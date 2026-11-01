@@ -42,13 +42,20 @@ class SyncService
                         $node = $current->nodes()->make(['selected' => false]);
                         $counts['added']++;
                     } else {
+                        // Older releases retained absent rows and their selection. A
+                        // returning node must be reviewed again, just like a new one.
+                        if (!$node->present) {
+                            $node->selected = false;
+                        }
                         $counts['updated']++;
                     }
                     $node->fill($data + ['present' => true, 'sort_order' => $position]);
                     $node->save();
                     $counts[$data['supported'] ? 'supported' : 'unsupported']++;
                 }
-                $counts['removed'] = $current->nodes()->where('present', true)->whereNotIn('fingerprint', $seen)->update(['present' => false]);
+                // A successful response is the complete snapshot, including an
+                // empty one. Also remove absent rows left by earlier releases.
+                $counts['removed'] = $current->nodes()->whereNotIn('fingerprint', $seen)->delete();
                 $current->forceFill(['last_synced_at' => now(), 'last_error' => null])->save();
                 return $counts;
             });

@@ -3,15 +3,23 @@
   const $ = (id) => document.getElementById(id);
   const apiBase = document.body.dataset.apiBase;
   const tokenKey = 'XBOARD_ACCESS_TOKEN';
-  const state = { token: '', sources: [], sourceId: null, nodes: [], selected: new Set(), saved: new Set(), busy: false, editing: null };
+  const state = { token: '', sources: [], sourceId: null, nodes: [], selected: new Set(), saved: new Set(), busy: false, editing: null, epoch: 0, refreshing: false, refreshQueued: false, refreshAbort: null };
   const current = () => state.sources.find((source) => source.id === state.sourceId);
   const eligible = (node) => node.present && node.supported;
   const protocolLabel = (node) => node.type === 'hysteria' ? 'Hysteria2' : (node.type || '—');
   const dirty = () => state.selected.size !== state.saved.size || [...state.selected].some((id) => !state.saved.has(id));
   const filtered = () => {
     const term = $('node-search').value.trim().toLocaleLowerCase();
-    return state.nodes.filter((node) => `${node.name} ${node.type} ${protocolLabel(node)}`.toLocaleLowerCase().includes(term));
+    return state.nodes.filter((node) => node.present && `${node.name} ${node.type} ${protocolLabel(node)}`.toLocaleLowerCase().includes(term));
   };
+
+  function invalidateRefresh() {
+    state.epoch += 1;
+    state.refreshAbort?.abort();
+  }
+
+  const canAutoRefresh = () => !!state.token && !document.hidden && !$('workspace').hidden
+    && !state.busy && !$('source-dialog').open && !dirty();
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -39,12 +47,14 @@
 
   async function run(action) {
     if (state.busy) return;
+    invalidateRefresh();
     setBusy(true);
     try { await action(); } catch (error) { notify(error.message || '操作失败，请稍后重试。', true); }
     finally { setBusy(false); }
   }
 
   function showLogin(message = '') {
+    invalidateRefresh();
     state.token = '';
     state.sources = [];
     state.sourceId = null;
@@ -59,9 +69,10 @@
     if (message) notify(message, true);
   }
 
-  async function request(path, data, authenticated = true) {
+  async function request(path, data, authenticated = true, signal) {
+    const requestToken = state.token;
     const headers = { Accept: 'application/json', 'Content-Language': 'zh-CN' };
-    if (authenticated) headers.Authorization = state.token;
+    if (authenticated) headers.Authorization = requestToken;
     if (data !== undefined) headers['Content-Type'] = 'application/json';
     const response = await fetch(path, {
       method: data === undefined ? 'GET' : 'POST',
@@ -70,11 +81,12 @@
       credentials: 'same-origin',
       cache: 'no-store',
       redirect: 'error',
+      signal,
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       if (authenticated && (response.status === 401 || response.status === 403)) {
-        showLogin('登录已失效或当前账号不是管理员，请重新登录。');
+        if (state.token === requestToken) showLogin('登录已失效或当前账号不是管理员，请重新登录。');
         throw new Error('请使用管理员账号登录。');
       }
       const fieldError = payload.errors && Object.values(payload.errors).flat().find((value) => typeof value === 'string');
@@ -137,6 +149,7 @@
       checkbox.dataset.unavailable = String(!eligible(node));
       checkbox.setAttribute('aria-label', `下发 ${node.name}`);
       checkbox.addEventListener('change', () => {
+        invalidateRefresh();
         if (checkbox.checked) state.selected.add(node.id); else state.selected.delete(node.id);
         row.classList.toggle('selected', checkbox.checked);
         renderSelection();
@@ -177,16 +190,65 @@
 
   async function loadNodes(id) {
     const nodes = await request(`${apiBase}/nodes?id=${encodeURIComponent(id)}`);
+    applyNodes(id, nodes);
+  }
+
+  function applyNodes(id, nodes, preserveView = false) {
+    const table = document.querySelector('.table-scroll');
+    const sourceList = $('sources-list');
+    const scroll = [table.scrollTop, table.scrollLeft, sourceList.scrollTop, sourceList.scrollLeft];
     state.sourceId = id;
-    state.nodes = nodes;
-    state.selected = new Set(nodes.filter((node) => node.selected && eligible(node)).map((node) => node.id));
+    state.nodes = nodes.filter((node) => node.present);
+    state.selected = new Set(state.nodes.filter((node) => node.selected && eligible(node)).map((node) => node.id));
     state.saved = new Set(state.selected);
-    $('node-search').value = '';
+    if (!preserveView) $('node-search').value = '';
     renderSources();
     renderDetail();
+    if (preserveView) {
+      [table.scrollTop, table.scrollLeft, sourceList.scrollTop, sourceList.scrollLeft] = scroll;
+    }
+  }
+
+  async function refreshSnapshot() {
+    if (state.refreshing) {
+      state.refreshQueued = true;
+      return;
+    }
+    if (!canAutoRefresh()) return;
+    const epoch = state.epoch;
+    const token = state.token;
+    const sourceId = state.sourceId;
+    const isCurrent = () => canAutoRefresh() && state.epoch === epoch && state.token === token && state.sourceId === sourceId;
+    const controller = new AbortController();
+    state.refreshing = true;
+    state.refreshQueued = false;
+    state.refreshAbort = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 15000);
+    try {
+      // Only read our cached snapshot. Scheduled upstream synchronization runs on the server.
+      const sources = await request(`${apiBase}/fetch`, undefined, true, controller.signal);
+      if (!isCurrent()) return;
+      const nextId = sources.some((source) => source.id === sourceId) ? sourceId : (sources[0]?.id ?? null);
+      const nodes = nextId === null ? [] : await request(`${apiBase}/nodes?id=${encodeURIComponent(nextId)}`, undefined, true, controller.signal);
+      // An administrator may start editing or switch sources while either request is in flight.
+      if (!isCurrent()) return;
+      state.sources = sources;
+      applyNodes(nextId, nodes, true);
+    } catch (_) {
+      // A temporary read failure must not replace the visible snapshot or interrupt editing.
+    } finally {
+      window.clearTimeout(timeout);
+      state.refreshAbort = null;
+      state.refreshing = false;
+      if (state.refreshQueued) {
+        state.refreshQueued = false;
+        queueMicrotask(refreshSnapshot);
+      }
+    }
   }
 
   function openSourceDialog(source = null) {
+    invalidateRefresh();
     state.editing = source?.id || null;
     $('dialog-title').textContent = source ? '编辑订阅源' : '添加订阅源';
     $('source-form').reset();
@@ -202,6 +264,7 @@
   $('edit-source').addEventListener('click', () => openSourceDialog(current()));
   for (const id of ['close-dialog', 'cancel-dialog']) $(id).addEventListener('click', () => $('source-dialog').close());
   $('source-dialog').addEventListener('cancel', (event) => { if (state.busy) event.preventDefault(); });
+  $('source-dialog').addEventListener('close', () => { state.editing = null; invalidateRefresh(); });
 
   $('source-form').addEventListener('submit', (event) => {
     event.preventDefault();
@@ -231,7 +294,7 @@
       notify('正在获取上游订阅，请稍候…');
       try {
         const result = await api('sync', { id });
-        notify(`同步完成：${result.total ?? 0} 个节点，可用 ${result.supported ?? 0} 个，新增 ${result.added ?? 0} 个。新增节点默认不勾选。`);
+        notify(`同步完成：${result.total ?? 0} 个节点，可用 ${result.supported ?? 0} 个，新增 ${result.added ?? 0} 个，移除 ${result.removed ?? 0} 个。新增节点默认不勾选。`);
       } finally {
         await loadSources();
         if (state.sources.some((source) => source.id === id)) await loadNodes(id);
@@ -261,10 +324,11 @@
   });
   $('node-search').addEventListener('input', renderNodes);
   $('select-filtered').addEventListener('click', () => {
+    invalidateRefresh();
     filtered().filter(eligible).forEach((node) => state.selected.add(node.id));
     renderNodes();
   });
-  $('clear-selection').addEventListener('click', () => { state.selected.clear(); renderNodes(); });
+  $('clear-selection').addEventListener('click', () => { invalidateRefresh(); state.selected.clear(); renderNodes(); });
   $('save-selection').addEventListener('click', () => {
     if (!current()) return;
     const id = state.sourceId;
@@ -299,6 +363,11 @@
     notify('已退出当前浏览器的管理登录。');
   });
   window.addEventListener('beforeunload', (event) => { if (dirty()) { event.preventDefault(); event.returnValue = ''; } });
+  document.addEventListener('visibilitychange', () => {
+    invalidateRefresh();
+    if (!document.hidden) void refreshSnapshot();
+  });
+  window.setInterval(refreshSnapshot, 30000);
 
   run(async () => {
     try {

@@ -16,9 +16,9 @@ class Parser
         if (strlen($body) > self::MAX_BYTES) {
             throw new RuntimeException('订阅内容超过 2 MiB 限制。');
         }
-        $body = trim(preg_replace('/^\xEF\xBB\xBF/', '', $body));
+        $body = trim(preg_replace('/^\xEF\xBB\xBF/', '', $body), " \t\n\r\v\f");
         if ($body === '') {
-            throw new RuntimeException('订阅为空，已保留上次同步结果。');
+            return [];
         }
         if (!preg_match('/^[a-z][a-z0-9+.-]*:\/\//i', $body) && preg_match('/^[A-Za-z0-9+\/_=\s-]+$/D', $body)) {
             $encoded = preg_replace('/\s+/', '', $body);
@@ -26,7 +26,10 @@ class Parser
             if ($decoded === false || strlen($decoded) > self::MAX_BYTES) {
                 throw new RuntimeException('订阅 Base64 格式无效。');
             }
-            $body = trim($decoded);
+            $body = trim($decoded, " \t\n\r\v\f");
+            if ($body === '') {
+                return [];
+            }
         }
         if (preg_match('/^[a-z][a-z0-9+.-]*:\/\//i', $body)) {
             $entries = preg_split('/\R/u', $body);
@@ -39,6 +42,14 @@ class Parser
                     throw new RuntimeException();
                 }
                 $yaml = Yaml::parse($body, Yaml::PARSE_EXCEPTION_ON_INVALID_TYPE);
+                if (is_array($yaml) && ($yaml['proxies'] ?? null) === []) {
+                    // Default parsing maps both {} and [] to PHP []. Only an
+                    // actual sequence may authorize deletion of the old snapshot.
+                    $typed = Yaml::parse($body, Yaml::PARSE_EXCEPTION_ON_INVALID_TYPE | Yaml::PARSE_OBJECT_FOR_MAP);
+                    if (!is_object($typed) || !is_array($typed->proxies ?? null)) {
+                        throw new RuntimeException();
+                    }
+                }
             } catch (Throwable $e) {
                 throw new RuntimeException('订阅 YAML 格式无效或包含不支持的引用。');
             }
@@ -48,8 +59,8 @@ class Parser
             $entries = array_values($yaml['proxies']);
             $format = 'yaml';
         }
-        if (!$entries || count($entries) > self::MAX_NODES) {
-            throw new RuntimeException('节点列表为空或超过 1000 个节点限制。');
+        if (count($entries) > self::MAX_NODES) {
+            throw new RuntimeException('节点列表超过 1000 个节点限制。');
         }
         $nodes = [];
         foreach ($entries as $index => $entry) {

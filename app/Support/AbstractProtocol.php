@@ -56,13 +56,14 @@ abstract class AbstractProtocol
      * @param string|null $clientName 客户端名称
      * @param string|null $clientVersion 客户端版本
      * @param string|null $userAgent 原始 User-Agent
+     * @param bool|null $externalOnly Explicit context for an empty external subscription
      */
-    public function __construct($user, $servers, $clientName = null, $clientVersion = null, $userAgent = null)
+    public function __construct($user, $servers, $clientName = null, $clientVersion = null, $userAgent = null, ?bool $externalOnly = null)
     {
         $this->user = $user;
         $this->servers = $servers;
-        $this->externalOnly = count($servers) > 0
-            && collect($servers)->every(fn ($server) => !empty($server['external']));
+        $this->externalOnly = $externalOnly ?? (count($servers) > 0
+            && collect($servers)->every(fn ($server) => !empty($server['external'])));
         $this->clientName = $clientName;
         $this->clientVersion = $clientVersion;
         $this->userAgent = $userAgent;

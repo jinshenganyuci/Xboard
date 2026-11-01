@@ -14,6 +14,8 @@ use App\Models\Server;
 use App\Models\ServerGroup;
 use App\Models\User;
 use App\Services\ExternalSubscription\Parser;
+use App\Services\ExternalSubscription\Fetcher;
+use App\Services\ExternalSubscription\SyncService;
 use Illuminate\Support\Str;
 use Symfony\Component\Yaml\Yaml;
 
@@ -113,7 +115,9 @@ function subscriptionNodes(array $response, string $format): array
                 verify(!isset($node['server_port']), 'Sing-box contains conflicting fixed and hopping ports.');
             }
         }
-        verify(($document['dns']['servers'][0]['type'] ?? null) === 'https', 'Unversioned Sing-box output retained legacy DNS format.');
+        if ($nodes !== []) {
+            verify(($document['dns']['servers'][0]['type'] ?? null) === 'https', 'Unversioned Sing-box output retained legacy DNS format.');
+        }
         return array_values(array_map(fn ($node) => ['name' => $node['tag'], 'credential' => $node['uuid'] ?? $node['password'] ?? ''], $nodes));
     }
     $decoded = base64_decode(trim($response['body']), true);
@@ -255,6 +259,44 @@ try {
         }
         verify(($node['external'] ?? false) === true && ($node['is_online'] ?? null) === null, 'External dashboard status is misleading.');
     }
+
+    // Exercise the same service used by manual and scheduled synchronization.
+    // The fixture fetcher prevents all external network access in this test.
+    $syncFixture = function (string $body) use ($source): array {
+        $fetcher = new class($body) extends Fetcher {
+            public function __construct(private string $body) {}
+            public function fetch(string $url): string { return $this->body; }
+        };
+        return (new SyncService($fetcher, new Parser()))->sync($source);
+    };
+    $stage = 'upstream deletion removes selected and unselected nodes';
+    $counts = $syncFixture($fixtureUris[2]);
+    verify($counts['removed'] === 2 && $source->nodes()->count() === 1, 'Deleted upstream nodes remain stored.');
+    verify($source->nodes()->firstOrFail()->selected, 'A surviving node lost its selection.');
+    $listing = requestLocal('GET', $api . 'nodes?id=' . $source->id, null, $adminAuth);
+    expectStatus($listing, 200);
+    verify(count(responseData($listing)) === 1, 'Deleted nodes remain in the administrator list.');
+    foreach (['general', 'shadowrocket', 'meta', 'sing-box'] as $format) {
+        $response = requestLocal('GET', '/api/v1/client/subscribe?' . http_build_query(['token' => $users['active']->token, 'flag' => $format]));
+        $delivered = subscriptionNodes($response, $format);
+        verify(count($delivered) === 1 && $delivered[0]['name'] === 'ReleaseSmokeTrojan', 'Deleted nodes remain in a subscription.');
+    }
+
+    $stage = 'valid empty upstream produces successful empty subscriptions';
+    $counts = $syncFixture("proxies: []\n");
+    verify($counts['removed'] === 1 && $source->nodes()->count() === 0, 'Empty upstream did not remove the final selected node.');
+    foreach (['general', 'shadowrocket', 'meta', 'sing-box'] as $format) {
+        $response = requestLocal('GET', '/api/v1/client/subscribe?' . http_build_query(['token' => $users['active']->token, 'flag' => $format]));
+        verify(subscriptionNodes($response, $format) === [], 'Empty upstream retained a delivered node.');
+    }
+    $listing = requestLocal('GET', $api . 'nodes?id=' . $source->id, null, $adminAuth);
+    expectStatus($listing, 200);
+    verify(responseData($listing) === [], 'Empty upstream retained administrator rows.');
+
+    $stage = 'returning upstream nodes are not automatically selected';
+    $syncFixture(implode("\n", $fixtureUris));
+    verify($source->nodes()->count() === 3 && $source->nodes()->where('selected', true)->count() === 0, 'A returning node regained its old selection.');
+    verify(subscriptionNodes(requestLocal('GET', '/api/v1/client/subscribe?' . http_build_query(['token' => $users['active']->token, 'flag' => 'general'])), 'general') === [], 'Returning unselected nodes were delivered.');
 } catch (Throwable $exception) {
     $failure = $stage . ': ' . ($exception instanceof SmokeFailure ? $exception->getMessage() : 'Unexpected ' . get_class($exception) . '; details intentionally suppressed.');
 } finally {
@@ -281,4 +323,4 @@ if ($failure !== null) {
     fwrite(STDERR, 'FAIL: ' . $failure . PHP_EOL);
     exit(1);
 }
-echo 'PASS: ' . $checks . ' checks; pages/assets, login/admin authorization, two-of-three node selection, four subscription formats, zero/exhausted quota, eligibility 403s, safe dashboard; synthetic fixtures removed.' . PHP_EOL;
+echo 'PASS: ' . $checks . ' checks; pages/assets, admin authorization, node selection, four subscription formats, eligibility, upstream deletion, empty feeds and unselected returning nodes; synthetic fixtures removed.' . PHP_EOL;

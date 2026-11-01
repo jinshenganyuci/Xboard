@@ -113,8 +113,26 @@ class SingBox extends AbstractProtocol
     {
         $appName = admin_setting('app_name', 'XBoard');
         $this->config = $this->loadConfig();
-        $this->buildOutbounds();
-        $this->buildRule();
+        if ($this->externalOnly && $this->servers === []) {
+            $inbounds = $this->config['inbounds'] ?? [];
+            foreach ($inbounds as &$inbound) {
+                // Block before any sniff/resolve action; discard references to
+                // routing data or detours removed with the previous snapshot.
+                unset($inbound['detour'], $inbound['domain_strategy'], $inbound['sniff'],
+                    $inbound['sniff_override_destination'], $inbound['sniff_timeout'],
+                    $inbound['route_address_set'], $inbound['route_exclude_address_set']);
+            }
+            unset($inbound);
+            $this->config = [
+                'dns' => ['servers' => [['tag' => 'local', 'address' => 'local']], 'final' => 'local'],
+                'inbounds' => $inbounds,
+                'outbounds' => [],
+                'route' => ['auto_detect_interface' => true, 'rules' => [['action' => 'reject']]],
+            ];
+        } else {
+            $this->buildOutbounds();
+            $this->buildRule();
+        }
         $this->adaptConfigForVersion();
         $user = $this->user;
 
