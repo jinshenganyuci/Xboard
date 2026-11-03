@@ -50,11 +50,19 @@ php artisan external-subscriptions:sync
 
 具备第三方下发资格的用户，即使启用源当前没有可下发节点，订阅接口仍返回 HTTP 200。Mihomo / Clash Meta 和 Sing-box 会收到阻断流量的空节点配置，避免退回直连；部分 URI 订阅客户端可能拒绝空订阅并保留旧配置。用户需要更新客户端订阅才能接收变更，服务端无法撤回客户端已经缓存的上游凭据。
 
+## 用户面板的节点状态
+
+已启用订阅源中已勾选、可下发的节点由服务器排队测活。新节点首次检测后，正常情况下每小时检查一次，全站最多同时探测两个节点。修改连接参数会使旧结果失效。打开面板、刷新订阅和内容相同的上游同步都不会触发额外探测。
+
+测活使用节点本身的 VLESS、Trojan 或 Hysteria2 配置，通过代理访问一个返回 HTTP 204 的 HTTPS 地址。成功代表从面板服务器出发，此节点在最近一次实测中能够代理请求。默认 Xboard 用户主题显示蓝点，并提供最近检测时间。第一次明确失败显示灰色「待复查」，五分钟后改用备用站，连续失败、面板服务器也能独立访问备用站时才显示红色「离线」。备用站本身不可达时显示灰色，并在下个小时再试。新节点、检测服务异常或超过两小时的旧结果显示灰色「未知」。自定义用户主题可读取节点接口的 `health_status`、`is_online` 和 `last_check_at` 展示相同状态。
+
+离线只影响面板显示。下发仍以勾选、上游是否存在、格式及用户资格为准。已有站点升级由镜像启动流程迁移第三方节点表并添加检测字段；请保留原数据库和 `.env`。在 Compose 环境设置 `ENABLE_EXTERNAL_SUBSCRIPTIONS_HEALTH=false` 并重建容器可关闭定时测活。
+
 ## 本地 Docker Compose 测试
 
 ### 已有站点使用发布镜像
 
-发布版本使用独立标签，例如 `ghcr.io/jinshenganyuci/xboard:external-v1.0.4`，支持 Linux AMD64 和 ARM64。发布任务通过启动及订阅检查后会将 `ghcr.io/jinshenganyuci/xboard:latest` 更新为同一镜像。先确认 GitHub Actions 的对应发布任务成功；首次发布若镜像为私有，需要在 GitHub Packages 设置中将镜像设为 Public，才能匿名拉取。
+发布版本使用独立标签，例如 `ghcr.io/jinshenganyuci/xboard:external-v1.0.5`，支持 Linux AMD64 和 ARM64。发布任务通过启动及订阅检查后会将 `ghcr.io/jinshenganyuci/xboard:latest` 更新为同一镜像。先确认 GitHub Actions 的对应发布任务成功；首次发布若镜像为私有，需要在 GitHub Packages 设置中将镜像设为 Public，才能匿名拉取。
 
 升级前停止容器并备份 `.env`、SQLite 数据目录（包括仍存在的 WAL/SHM）、主题、插件及 Redis 数据卷。已有站点只替换 Compose 的 `image`，保留所有原有挂载和 `APP_KEY`，然后执行：
 

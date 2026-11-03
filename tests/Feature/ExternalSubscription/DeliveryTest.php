@@ -186,6 +186,36 @@ class DeliveryTest extends TestCase
             ->assertOk()->assertJsonCount(0, 'data');
     }
 
+    public function test_dashboard_returns_checked_states_without_exposing_node_details_and_changes_etag_on_recheck(): void
+    {
+        $at = time() - 10;
+        $online = $this->externalNode('Online', ['health_status' => 'online', 'health_checked_at' => $at]);
+        $this->externalNode('Offline', ['health_status' => 'offline', 'health_checked_at' => $at]);
+        $this->externalNode('Pending', ['health_status' => 'pending', 'health_checked_at' => $at]);
+        $this->externalNode('Unknown');
+        $this->externalNode('Not selected', ['selected' => false]);
+        Sanctum::actingAs($this->user());
+
+        $response = $this->getJson('/api/v1/user/server/fetch')->assertOk()->assertJsonCount(4, 'data');
+        $rows = collect($response->json('data'))->keyBy('name');
+        foreach (['Online' => true, 'Offline' => false, 'Pending' => null, 'Unknown' => null] as $name => $expected) {
+            $row = $rows->get($name);
+            $this->assertSame(strtolower($name), $row['health_status']);
+            $this->assertSame($expected, $row['is_online']);
+            $this->assertSame($name === 'Unknown' ? null : $at, $row['last_check_at']);
+            foreach (['config', 'host', 'url', 'password', 'source_id', 'health_revision', 'health_due_at'] as $field) {
+                $this->assertArrayNotHasKey($field, $row);
+            }
+        }
+        $this->assertStringNotContainsString('upstream-password', $response->getContent());
+
+        $etag = $response->headers->get('ETag');
+        $online->update(['health_status' => 'pending', 'health_checked_at' => $at + 2]);
+        $next = $this->withHeader('If-None-Match', $etag)->getJson('/api/v1/user/server/fetch')->assertOk();
+        $this->assertNotSame($etag, $next->headers->get('ETag'));
+        $this->assertSame('pending', collect($next->json('data'))->firstWhere('name', 'Online')['health_status']);
+    }
+
     public function test_external_names_cannot_collide_with_native_names_after_merging(): void
     {
         $name = 'Shared name';

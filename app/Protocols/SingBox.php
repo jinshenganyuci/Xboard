@@ -169,6 +169,12 @@ class SingBox extends AbstractProtocol
         $servers = $this->uniqueExternalNames($this->servers, array_column($outbounds, 'tag'));
         $proxies = [];
         foreach ($servers as $item) {
+            if (!empty($item['external'])) {
+                if ($outbound = $this->externalOutbound($item)) {
+                    $proxies[] = $outbound;
+                }
+                continue;
+            }
             $protocol_settings = $item['protocol_settings'];
             if ($item['type'] === Server::TYPE_SHADOWSOCKS) {
                 $ssConfig = $this->buildShadowsocks($item['password'], $item);
@@ -250,6 +256,23 @@ class SingBox extends AbstractProtocol
         $outbounds = array_merge($outbounds, $proxies);
         $this->config['outbounds'] = $outbounds;
         return $outbounds;
+    }
+
+    /** Render an imported node without a user UUID or template-supplied routes. */
+    public function externalOutbound(array $server): ?array
+    {
+        $password = $server['password'] ?? null;
+        if (!is_string($password) || $password === '' || empty($server['external'])) {
+            return null;
+        }
+        return match ($server['type'] ?? '') {
+            Server::TYPE_VLESS => in_array(data_get($server, 'protocol_settings.network'), ['tcp', 'ws', 'grpc', 'h2', 'httpupgrade'], true)
+                ? $this->buildVless($password, $server) : null,
+            Server::TYPE_TROJAN => $this->buildTrojan($password, $server),
+            Server::TYPE_HYSTERIA => data_get($server, 'protocol_settings.version') === 2
+                ? $this->buildHysteria($password, $server) : null,
+            default => null,
+        };
     }
 
     private function uniqueExternalNames(array $servers, array $reservedTags): array

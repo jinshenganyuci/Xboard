@@ -42,4 +42,36 @@ class NodeProvider
     {
         return $this->query()->count();
     }
+
+    /** Presentation fields only. Reading this list never connects to an upstream node. */
+    public function dashboardForUser(User $user): array
+    {
+        if (!$user->isActive()) {
+            return [];
+        }
+
+        $nodes = $this->query()->with('source:id,enabled')->get();
+        if ($nodes->isEmpty()) {
+            return [];
+        }
+        $statuses = app(HealthService::class)->statuses($nodes);
+
+        return $nodes->map(static function (ExternalSubscriptionNode $node) use ($statuses) {
+            $status = $statuses[$node->id] ?? [];
+            $config = $node->config;
+            return [
+                'id' => -$node->id,
+                'type' => $node->type,
+                'version' => data_get($config, 'protocol_settings.version'),
+                'name' => $node->name,
+                'rate' => null,
+                'tags' => $config['tags'] ?? [],
+                'health_status' => $status['health_status'] ?? 'unknown',
+                'is_online' => $status['is_online'] ?? null,
+                'last_check_at' => $status['last_check_at'] ?? null,
+                'cache_key' => 'external_' . (-$node->id),
+                'external' => true,
+            ];
+        })->all();
+    }
 }

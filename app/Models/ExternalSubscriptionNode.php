@@ -15,6 +15,9 @@ class ExternalSubscriptionNode extends Model
         'present' => 'boolean',
         'supported' => 'boolean',
         'sort_order' => 'integer',
+        'health_checked_at' => 'integer',
+        'health_due_at' => 'integer',
+        'health_revision' => 'integer',
     ];
 
     public function source(): BelongsTo

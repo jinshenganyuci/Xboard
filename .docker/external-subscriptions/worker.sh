@@ -1,9 +1,17 @@
 #!/bin/sh
 # One fresh PHP process per scan avoids retaining application/database state.
-# The command handles five-minute freshness, failure cooldown and duplicate runners.
+# Synchronization and health probing have independent workers and time budgets.
 set -u
 
-case "${ENABLE_EXTERNAL_SUBSCRIPTIONS_SYNC:-true}" in
+case "${1:-sync}" in
+    sync) enabled=${ENABLE_EXTERNAL_SUBSCRIPTIONS_SYNC:-true}; interval=60
+        set -- external-subscriptions:sync --due ;;
+    health) enabled=${ENABLE_EXTERNAL_SUBSCRIPTIONS_HEALTH:-true}; interval=15
+        case "${2:-}" in 0|1) slot=$2 ;; *) exit 2 ;; esac
+        set -- external-subscriptions:health "--slot=$slot" ;;
+    *) exit 2 ;;
+esac
+case "$enabled" in
     1|true|TRUE|yes|YES|on|ON) ;;
     *) exit 0 ;;
 esac
@@ -18,9 +26,9 @@ is_installed() {
 
 trap 'exit 0' TERM INT
 while :; do
-    next_scan=$(( $(date +%s) + 60 ))
+    next_scan=$(( $(date +%s) + interval ))
     if is_installed; then
-        php /www/artisan external-subscriptions:sync --due --no-interaction
+        php /www/artisan "$@" --no-interaction
     fi
     wait_seconds=$(( next_scan - $(date +%s) ))
     [ "$wait_seconds" -gt 0 ] || wait_seconds=1

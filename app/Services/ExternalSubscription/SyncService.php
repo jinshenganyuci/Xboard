@@ -42,6 +42,16 @@ class SyncService
                         $node = $current->nodes()->make(['selected' => false]);
                         $counts['added']++;
                     } else {
+                        // Compare the actual serialized content, not ciphertext
+                        // or PHP's loose equality (which conflates numeric passwords).
+                        $configChanged = json_encode($node->config, JSON_THROW_ON_ERROR) !== json_encode($data['config'], JSON_THROW_ON_ERROR);
+                        if (!$node->present || $node->supported !== $data['supported'] || $configChanged) {
+                            $current->nodes()->whereKey($node->id)->update(HealthService::invalidatedAttributes());
+                        } else {
+                            // Encryption uses a random IV: don't rewrite unchanged
+                            // plaintext or invalidate a probe on every feed refresh.
+                            unset($data['config']);
+                        }
                         // Older releases retained absent rows and their selection. A
                         // returning node must be reviewed again, just like a new one.
                         if (!$node->present) {

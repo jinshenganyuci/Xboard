@@ -178,10 +178,15 @@ try {
     $api = '/api/v2/' . $securePath . '/external-subscription/';
     $stage = 'web pages and assets';
     foreach (['/', '/' . $securePath, '/' . $securePath . '/external-subscriptions',
-        '/assets/external-subscriptions/app.js', '/assets/external-subscriptions/app.css'] as $path) {
+        '/assets/external-subscriptions/app.js', '/assets/external-subscriptions/app.css',
+        '/assets/external-subscriptions/node-health-v1.js', '/assets/external-subscriptions/node-health-v1.css',
+        App\Support\DefaultThemeHealthAsset::URL] as $path) {
         $response = requestLocal('GET', $path);
         expectStatus($response, 200);
         verify(strlen($response['body']) > 100, 'A page or required asset is unexpectedly empty.');
+        if ($path === '/') {
+            verify(str_contains($response['body'], App\Support\DefaultThemeHealthAsset::URL), 'Installed default theme does not load the health renderer.');
+        }
     }
     $stage = 'login and administrator authorization';
     expectStatus(requestLocal('GET', $api . 'fetch'), 403);
@@ -257,7 +262,7 @@ try {
         foreach (['password', 'config', 'url', 'host'] as $field) {
             verify(!array_key_exists($field, $node), 'User dashboard exposes private node fields.');
         }
-        verify(($node['external'] ?? false) === true && ($node['is_online'] ?? null) === null, 'External dashboard status is misleading.');
+        verify(($node['external'] ?? false) === true && ($node['health_status'] ?? null) === 'unknown' && array_key_exists('is_online', $node) && $node['is_online'] === null, 'Unprobed node is not marked unknown.');
     }
 
     // Exercise the same service used by manual and scheduled synchronization.

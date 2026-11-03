@@ -4,6 +4,7 @@ namespace App\Http\Controllers\V2\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ExternalSubscription;
+use App\Services\ExternalSubscription\HealthService;
 use App\Services\ExternalSubscription\SyncService;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\Request;
@@ -60,7 +61,9 @@ class ExternalSubscriptionController extends Controller
                     $source->enabled = false;
                     $source->last_synced_at = null;
                     $source->last_error = null;
-                    $source->nodes()->update(['selected' => false, 'present' => false]);
+                    $source->nodes()->update(['selected' => false, 'present' => false] + HealthService::invalidatedAttributes());
+                } elseif ($source->isDirty('enabled')) {
+                    $source->nodes()->where('selected', true)->update(HealthService::invalidatedAttributes());
                 }
                 $source->save();
 
@@ -134,8 +137,9 @@ class ExternalSubscriptionController extends Controller
                     ]);
                 }
 
-                $source->nodes()->update(['selected' => false]);
-                $source->nodes()->whereIn('id', $ids)->update(['selected' => true]);
+                $reset = HealthService::invalidatedAttributes();
+                $source->nodes()->where('selected', true)->whereNotIn('id', $ids)->update(['selected' => false] + $reset);
+                $source->nodes()->where('selected', false)->whereIn('id', $ids)->update(['selected' => true] + $reset);
 
                 return response()->json(['data' => ['selected_count' => count($ids)]]);
             });

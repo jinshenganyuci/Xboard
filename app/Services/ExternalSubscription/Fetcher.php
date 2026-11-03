@@ -48,17 +48,24 @@ class Fetcher
             throw new RuntimeException();
         }
         $host = strtolower(trim($parts['host'], '[]'));
+        $port = $parts['port'] ?? ($parts['scheme'] === 'https' ? 443 : 80);
+        if ($port < 1 || $port > 65535) {
+            throw new RuntimeException();
+        }
+        return ['host' => $host, 'port' => $port, 'address' => $this->publicAddresses($host)[0]];
+    }
+
+    /** Validate every address before either the source fetcher or probe dials a pinned IP. */
+    public function publicAddresses(string $host, ?callable $resolve = null): array
+    {
+        $host = strtolower(rtrim($host, '.'));
         if ((!filter_var($host, FILTER_VALIDATE_IP) && !filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME)) || str_ends_with($host, '.localhost') || $host === 'localhost') {
             throw new RuntimeException();
         }
         if (!filter_var($host, FILTER_VALIDATE_IP) && preg_match('/^(?:[0-9.]+|0x[0-9a-f]+)$/iD', $host)) {
             throw new RuntimeException();
         }
-        $port = $parts['port'] ?? ($parts['scheme'] === 'https' ? 443 : 80);
-        if ($port < 1 || $port > 65535) {
-            throw new RuntimeException();
-        }
-        $addresses = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : $this->resolveAddresses($host);
+        $addresses = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : ($resolve ? $resolve($host) : $this->resolveAddresses($host));
         if (!$addresses) {
             throw new RuntimeException();
         }
@@ -67,7 +74,7 @@ class Fetcher
                 throw new RuntimeException();
             }
         }
-        return ['host' => $host, 'port' => $port, 'address' => $addresses[0]];
+        return array_values(array_unique($addresses));
     }
 
     protected function resolveAddresses(string $host): array
@@ -78,7 +85,7 @@ class Fetcher
 
     protected function isPublicAddress(string $address): bool
     {
-        if (!filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+        if (!filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE)) {
             return false;
         }
         $binary = inet_pton($address);

@@ -14,6 +14,9 @@
 !public/assets/
 !public/assets/external-subscriptions/
 !public/assets/external-subscriptions/**
+!theme/
+!theme/Xboard/
+!theme/Xboard/dashboard.blade.php
 !.docker/
 !.docker/external-subscriptions/
 !.docker/external-subscriptions/worker.sh

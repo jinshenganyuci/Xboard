@@ -20,22 +20,10 @@ class ServerController extends Controller
         if ($userService->isAvailable($user)) {
             $servers = ServerService::getAvailableServers($user);
         }
-        $data = NodeResource::collection($servers)->resolve($request);
-        foreach (app(NodeProvider::class)->forUser($user) as $server) {
-            // The user dashboard is not a subscription: expose presentation fields only.
-            $data[] = [
-                'id' => $server['id'],
-                'type' => $server['type'],
-                'version' => data_get($server, 'protocol_settings.version'),
-                'name' => $server['name'],
-                'rate' => null,
-                'tags' => $server['tags'] ?? [],
-                'is_online' => null,
-                'last_check_at' => null,
-                'cache_key' => 'external_' . $server['id'],
-                'external' => true,
-            ];
-        }
+        $data = array_merge(
+            NodeResource::collection($servers)->resolve($request),
+            app(NodeProvider::class)->dashboardForUser($user)
+        );
         $eTag = sha1(json_encode($data));
         if (strpos($request->header('If-None-Match', ''), $eTag) !== false ) {
             return response(null,304);

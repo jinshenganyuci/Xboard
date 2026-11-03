@@ -1,6 +1,7 @@
 <?php
 
 use App\Services\ThemeService;
+use App\Support\DefaultThemeHealthAsset;
 use App\Services\UpdateService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -71,6 +72,18 @@ Route::get('/', function (Request $request) {
         ]);
         abort(500, '主题加载失败');
     }
+});
+
+// Release images serve the prebuilt static file. A source checkout can serve the
+// identical, verified asset without writing to the user's theme or public files.
+Route::get(DefaultThemeHealthAsset::URL, static function () {
+    $path = base_path('theme/Xboard/assets/umi.js');
+    abort_unless(DefaultThemeHealthAsset::isStockFile($path), 404);
+    return response(DefaultThemeHealthAsset::compile(file_get_contents($path)), 200, [
+        'Content-Type' => 'text/javascript; charset=utf-8',
+        'Cache-Control' => 'public, max-age=31536000, immutable',
+        'X-Content-Type-Options' => 'nosniff',
+    ]);
 });
 
 // The page contains no private data; all source/node requests require admin API authentication.
