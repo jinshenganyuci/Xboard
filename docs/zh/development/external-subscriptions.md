@@ -2,6 +2,8 @@
 
 本功能让 Xboard 从第三方订阅读取节点，由管理员勾选后，通过用户原有的 Xboard 订阅地址下发。无需为这些节点部署 Xboard 服务端。
 
+开发接手先读仓库根目录的 [AGENTS.md](../../../AGENTS.md)，再读[云端开发、测试与发布交接](cloud-development.md)。本文侧重功能、管理操作和已有站点的升级方式。
+
 ## 适用范围
 
 - 用户必须存在、未被封禁、已关联套餐，且套餐未到期；永久有效套餐沿用 Xboard 的永久有效规则。
@@ -72,7 +74,7 @@ docker compose up -d --force-recreate xboard
 docker compose logs --tail=100 xboard
 ```
 
-启动会自动新增第三方订阅的两张表，不要再次运行安装命令。打开原后台并检查第三方订阅页面能加载。回退只换回升级前固定的官方镜像并重建容器，保留数据库中的新增表；不要执行 `migrate:rollback` 或 `xboard:rollback`。
+首次升级会新增第三方订阅的两张表，`external-v1.0.5` 还会在第三方节点表中新增四个测活字段及到期索引。启动流程会执行迁移，不要再次运行安装命令。打开原后台并检查第三方订阅页面能加载。回退时使用升级前记录的固定镜像并重建容器，保留数据库中的新增表和字段；不要执行 `migrate:rollback` 或 `xboard:rollback`。曾经验证过的上游运行时不代表任意历史版本都兼容，修改迁移或基础镜像后应重新使用脱敏副本验证升级与回退。
 
 镜像版本通过 OCI 标签和镜像 digest 标识，应用内原上游版本信息可能仍显示基础版本。此发布方式统一通过 Compose 换镜像升级，不使用后台源码更新按钮或 `update.sh`。
 
@@ -81,6 +83,8 @@ docker compose logs --tail=100 xboard
 ### 开发测试实例
 
 `compose.external-test.yaml` 用于独立本地测试。它绑定当前源码，采用 SQLite，所有服务合在一个容器内运行，并仅发布到 `127.0.0.1:17001`。
+
+这个 Compose 使用原官方镜像并挂载源码，没有打包 `Dockerfile.external` 新增的 sing-box 与独立测活 worker。它适合 PHP/API 开发，不能单独证明发布镜像的自动同步、小时测活服务正常。完整镜像和真实协议验收使用[云端交接文档](cloud-development.md)中的候选镜像测试。
 
 内存限制分两层：
 
@@ -144,6 +148,19 @@ docker compose -f compose.external-test.yaml up -d
 
 Octane 是常驻进程。修改 PHP 代码后需要重启测试容器或重新加载 Octane，避免仍执行旧代码。
 
+### 测试结束与清理
+
+只删除本次新建的一次性测试容器、网络、数据卷、候选镜像、构建缓存和临时证书，不清理用户原有演示实例的数据或其他项目。`run-health-smoke.sh` 会通过退出钩子清理自己的 Compose 项目和临时证书；异常终止后仍需检查残留。不要对共享 Docker 环境执行无范围的 `docker system prune`。
+
+本项目的 Mac 本地测试要求 Docker 虚拟机总内存不超过 2 GiB，测试完成后关闭本次启动的 Colima 实例，并确认没有本任务遗留的运行实例。例如使用专用 `xboard-test` profile 时，完成容器清理后执行：
+
+```bash
+colima stop --profile xboard-test
+colima list
+```
+
+用户要求保留的演示实例可以保留停止状态和数据，不能以保留演示实例为由让 Colima 继续占用内存。
+
 ## 自动化测试
 
 测试依赖 PHPUnit 等 Composer 开发依赖。正式使用无需保留这些依赖；验收时在一次性测试环境中安装，先停止常驻测试容器，保持总内存限制。
@@ -177,6 +194,10 @@ docker compose -f compose.external-test.yaml exec xboard sh -lc \
 | 订阅源与节点模型 | `app/Models/ExternalSubscription.php`、`ExternalSubscriptionNode.php` |
 | 获取、解析与同步 | `app/Services/ExternalSubscription/` |
 | 定时同步命令 | `app/Console/Commands/SyncExternalSubscriptions.php` |
+| 测活状态与调度 | `app/Services/ExternalSubscription/HealthService.php`、`app/Console/Commands/ProbeExternalSubscriptionHealth.php` |
+| 真实代理探测 | `app/Services/ExternalSubscription/ProbeTransport.php`、`app/Protocols/SingBox.php` |
+| 发布镜像独立 worker | `.docker/external-subscriptions/worker.sh`、`.docker/external-subscriptions/supervisor.conf` |
+| 默认主题健康状态入口 | `app/Support/DefaultThemeHealthAsset.php`、`theme/Xboard/dashboard.blade.php` |
 
 管理接口位于 `/api/v2/{后台安全路径}/external-subscription/`：GET `fetch`、`nodes`；POST `save`、`drop`、`sync`、`select`。所有接口沿用管理员 Sanctum Bearer 鉴权。`select` 接收源 `id` 和完整 `node_ids` 数组，空数组表示全部取消；跨源、失效及不支持的节点会被拒绝。
 

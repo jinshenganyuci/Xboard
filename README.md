@@ -1,5 +1,18 @@
 # Xboard
 
+## 本 Fork 的第三方订阅二开
+
+本仓库的二开基线位于 [`feat/third-party-subscriptions`](https://github.com/jinshenganyuci/Xboard/tree/feat/third-party-subscriptions)。支持导入第三方订阅、勾选节点下发、自动同步并删除上游消失的节点，以及每小时真实代理测活和用户面板状态显示。
+
+截至 2026-11-04，最近发布版本为 `external-v1.0.5`，镜像为 `ghcr.io/jinshenganyuci/xboard:external-v1.0.5`，支持 AMD64 / ARM64。本二开的专用发布流程在验收通过后更新 `latest`；实际新版本以仓库标签和发布任务结果为准。
+
+- [AGENTS.md](./AGENTS.md) — 开发代理必须阅读的功能约束、测试和发布要求。
+- [第三方订阅功能说明](./docs/zh/development/external-subscriptions.md) — 管理操作、同步与测活规则、数据存储和升级。
+- [云端开发交接](./docs/zh/development/cloud-development.md) — 独立测试环境、可执行测试命令、发布流程及当前 CI 缺口。
+- [镜像发布工作流](./.github/workflows/publish-external-image.yml) — 版本标签触发，验收通过后更新 `latest`。
+
+新开发环境请检出上述二开分支，并先阅读交接文档。已有站点升级需保留原 `.env`、`APP_KEY`、数据库及数据挂载。下方保留上游项目介绍；其 Quick Start 安装的是上游版本，本二开请使用上面的部署和开发说明。
+
 <div align="center">
 
 [![Telegram](https://img.shields.io/badge/Telegram-Channel-blue)](https://t.me/XboardOfficial)
