@@ -5,10 +5,20 @@
 ## 仓库与已交付版本
 
 - 仓库为 `jinshenganyuci/Xboard`，当前二开分支为 `feat/third-party-subscriptions`。创建云端任务后先确认分支，不假定默认分支已包含这些改动。
-- 已发布的历史交付基线为 `external-v1.0.5`，功能提交为 `86a03f80699a91f970a2a45705c54655aa317f66`。本文功能说明更新于 2026-11-05，描述当前分支实现；AnyTLS 和延迟等新增功能是否已发布，需另核对标签与发布任务。
+- 2026-11-05 已发布 `external-v1.0.6`，功能提交为 `e19809b5875d1d6b24b2f903cbfcdc16d9743598`，包含 AnyTLS 和延迟功能。[发布任务](https://github.com/jinshenganyuci/Xboard/actions/runs/42023529028)全部成功，已核对 `latest` 与版本标签的多架构 digest 均为 `sha256:bf4648121cd151d57d0657209cc4d4dbaac91f52c65192d3fe4f280904018251`，包含 AMD64 / ARM64，两个架构的 OCI revision 均指向上述功能提交。
+- 前一历史交付基线为 `external-v1.0.5`，功能提交为 `86a03f80699a91f970a2a45705c54655aa317f66`。
 - 该历史版本镜像为 `ghcr.io/jinshenganyuci/xboard:external-v1.0.5`；`latest` 是可变标签，不用于长期标识测试对象。
 - v1.0.5 多架构索引 digest 为 `sha256:04e21a9edb6ff95bbfcc367a1a318126a0d3b7e551baf3d4dbf5b6cae74688d0`，包含 `linux/amd64` 和 `linux/arm64`。
 - [v1.0.5 发布任务](https://github.com/jinshenganyuci/Xboard/actions/runs/41666121872)通过后才更新 `latest`。以后发布应记录新的提交、标签、digest 和工作流结果，不覆盖旧版本标签。
+
+### v1.0.6 本次验收记录
+
+- 当前代码 PHPUnit：165 个测试、1419 个断言通过；两个浏览器脚本通过，默认主题使用候选镜像生成的实际 v2 bundle。
+- 本机 ARM64 候选镜像：285 项 HTTP 检查；隔离 Compose 中 VLESS、Trojan、Hysteria2、AnyTLS 真实 HTTPS 测活与延迟，以及失败复查、恢复、过期和无额外探测行为通过。
+- 用户提供的 11 节点私密订阅：3 VLESS、3 Trojan、5 AnyTLS 全部识别；四种格式的名称、凭据和连接参数验证通过；Sing-box 配置检查通过；11 个节点各一次真实代理 HTTPS 204 请求全部成功。因本机 DNS 返回 Fake-IP，该一次性实连脚本使用验证 TLS 的固定公共 DoH 解析，仍执行原公网地址校验；发布代码没有放宽校验或加入该测试解析器。此结果只描述测试时从本机出发的联通情况。
+- 独立临时 SQLite 验证从 v1.0.5 表结构添加可空延迟字段，原密文和勾选不变，新字段默认 NULL，旧列集合的读、插入、更新仍成功。本次未重新执行旧镜像整体回退；回退兼容范围不能由此扩展到任意历史版本。
+- 发布的 AMD64 digest 通过工作流的全新安装、HTTP、无人访问自动删除和真实四协议测活，再更新 `latest`。ARM64 本地实测对象为同源码候选镜像。
+- 本地专用 Colima 上限 2 GiB，容器内存及含 swap 上限均为 1536 MiB，没有 OOM。临时容器、网络、镜像、构建缓存和私密订阅副本已删除，原演示数据保留；三个 Colima profile 均确认停止。未部署生产站点。
 
 ## 已实现的行为与不可随意改变的约束
 

@@ -6,7 +6,7 @@
 
 已启用源中保存勾选的节点每小时自动测活，同一次真实代理请求还记录延迟，管理页和默认用户主题均可查看。延迟为面板服务器经节点到检测站点的请求耗时，并非用户本机 ping；刷新页面不会增加探测。
 
-2026-11-04 的已发布历史基线为 `external-v1.0.5`，镜像为 `ghcr.io/jinshenganyuci/xboard:external-v1.0.5`，支持 AMD64 / ARM64。上面的功能说明对应当前分支，不代表新功能已包含于该历史镜像。本二开的专用发布流程在验收通过后更新 `latest`；实际新版本以仓库标签和发布任务结果为准。
+2026-11-05 已发布 `external-v1.0.6`，镜像为 `ghcr.io/jinshenganyuci/xboard:external-v1.0.6`，支持 AMD64 / ARM64，[发布验收](https://github.com/jinshenganyuci/Xboard/actions/runs/42023529028)成功后已更新 `latest`。未来实际发布版本以仓库标签和成功的发布任务为准。
 
 - [AGENTS.md](./AGENTS.md) — 开发代理必须阅读的功能约束、测试和发布要求。
 - [第三方订阅功能说明](./docs/zh/development/external-subscriptions.md) — 管理操作、同步与测活规则、数据存储和升级。

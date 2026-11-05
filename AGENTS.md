@@ -5,7 +5,7 @@
 ## 仓库与当前基线
 
 - Fork 为 `https://github.com/jinshenganyuci/Xboard`，二开基线分支为 `feat/third-party-subscriptions`。新任务先检查分支、HEAD 和工作区，不要假定默认分支包含这些功能，也不要覆盖已有未提交修改。
-- 功能说明更新于 2026-11-05。已发布的历史基线为 `external-v1.0.5`，源码提交 `86a03f80699a91f970a2a45705c54655aa317f66`；下文描述当前分支实现，不表示新增功能已经发布。实际发布版本以标签和成功的发布任务为准。
+- 功能说明更新于 2026-11-05。本次已发布 `external-v1.0.6`，源码提交 `e19809b5875d1d6b24b2f903cbfcdc16d9743598`；完整验收及 digest 见开发交接文档。此记录是基线，未来实际发布版本以标签和成功的发布任务为准。
 - 发布镜像为 `ghcr.io/jinshenganyuci/xboard`，使用 `Dockerfile.external` 和 `.github/workflows/publish-external-image.yml`。上游 README 的 `compose` 分支和普通 Dockerfile 不是此二开的发布入口。
 - 日常代码修改和基础测试适合云端开发环境；完整容器验收和镜像发布沿用 GitHub Actions。生产站点及其数据仍由部署服务器持有。
 
