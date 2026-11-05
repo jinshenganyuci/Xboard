@@ -21,14 +21,20 @@ class ProbeTransport
     /** true: verified 204; false: failed proxy path; null: no reliable measurement. */
     public function check(array $config, bool $backup = false): ?bool
     {
+        return $this->measure($config, $backup)->online;
+    }
+
+    /** Latency covers the proxied HTTP request, excluding resolver and core startup. */
+    public function measure(array $config, bool $backup = false): ProbeResult
+    {
         $process = null;
         try {
             if (!is_executable(self::BINARY) || !is_executable(self::WATCHDOG) || !function_exists('curl_init') || !function_exists('proc_open')) {
-                return null;
+                return new ProbeResult(null);
             }
             $outbound = $this->pinnedOutbound($config, $backup);
             if ($outbound === null) {
-                return null;
+                return new ProbeResult(null);
             }
 
             $port = $this->localPort();
@@ -43,17 +49,17 @@ class ProbeTransport
             $process->disableOutput();
             $process->start();
             if (!$this->waitForListener($process, $port)) {
-                return null;
+                return new ProbeResult(null);
             }
 
             $result = $this->request204($backup ? self::BACKUP : self::PRIMARY, [
                 CURLOPT_PROXY => '127.0.0.1:' . $port, CURLOPT_PROXYTYPE => CURLPROXY_SOCKS5_HOSTNAME,
                 CURLOPT_PROXYUSERNAME => $username, CURLOPT_PROXYPASSWORD => $password, CURLOPT_NOPROXY => '',
             ], 8000);
-            $result = $process->isRunning() ? $result : null;
+            $result = $process->isRunning() ? $result : new ProbeResult(null);
         } catch (Throwable $e) {
             // Resolver/renderer/process errors must not leak a hostname, token or password.
-            return null;
+            return new ProbeResult(null);
         } finally {
             try {
                 $process?->stop(0.3);
@@ -172,9 +178,10 @@ class ProbeTransport
     }
 
     /** Direct control is a veto only: it can change offline to unknown, never to online. */
-    protected function applyBackupControl(?bool $proxyResult, bool $backup): ?bool
+    protected function applyBackupControl(ProbeResult $proxyResult, bool $backup): ProbeResult
     {
-        return $backup && $proxyResult === false && !$this->backupBaselineAvailable() ? null : $proxyResult;
+        return $backup && $proxyResult->online === false && !$this->backupBaselineAvailable()
+            ? new ProbeResult(null) : $proxyResult;
     }
 
     protected function backupBaselineAvailable(): bool
@@ -196,7 +203,7 @@ class ProbeTransport
             if (is_bool($cached)) {
                 return $cached;
             }
-            $available = $this->request204(self::BACKUP, [CURLOPT_PROXY => '', CURLOPT_NOPROXY => '*'], 2500) === true;
+            $available = $this->request204(self::BACKUP, [CURLOPT_PROXY => '', CURLOPT_NOPROXY => '*'], 2500)->online === true;
             Cache::put($key, $available, 30);
             return $available;
         } catch (Throwable $e) {
@@ -212,11 +219,11 @@ class ProbeTransport
         }
     }
 
-    protected function request204(string $target, array $networkOptions, int $timeoutMs): ?bool
+    protected function request204(string $target, array $networkOptions, int $timeoutMs): ProbeResult
     {
         $curl = curl_init();
         if (!$curl) {
-            return null;
+            return new ProbeResult(null);
         }
         $bytes = 0;
         try {
@@ -231,10 +238,12 @@ class ProbeTransport
                     return $bytes <= 4096 ? strlen($body) : 0;
                 },
             ])) {
-                return null;
+                return new ProbeResult(null);
             }
             $ok = curl_exec($curl) !== false;
-            return $this->classify($ok, curl_errno($curl), (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE), $bytes);
+            $online = $this->classify($ok, curl_errno($curl), (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE), $bytes);
+            $seconds = curl_getinfo($curl, CURLINFO_TOTAL_TIME);
+            return is_float($seconds) || is_int($seconds) ? ProbeResult::fromSeconds($online, $seconds) : new ProbeResult($online);
         } finally {
             curl_close($curl);
         }

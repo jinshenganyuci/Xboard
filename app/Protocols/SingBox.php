@@ -152,6 +152,11 @@ class SingBox extends AbstractProtocol
 
     protected function isCompatible($server)
     {
+        if (!empty($server['external']) && $server['type'] === Server::TYPE_ANYTLS
+            && $this->clientName === 'sing-box' && !empty($this->clientVersion)
+            && version_compare($this->clientVersion, '1.12.0', '<')) {
+            return false;
+        }
         // Never silently reduce an imported hopping node to its fallback port.
         if (!empty($server['external']) && $server['type'] === Server::TYPE_HYSTERIA
             && (isset($server['ports']) || isset($server['protocol_settings']['hop_interval']))
@@ -269,6 +274,7 @@ class SingBox extends AbstractProtocol
             Server::TYPE_VLESS => in_array(data_get($server, 'protocol_settings.network'), ['tcp', 'ws', 'grpc', 'h2', 'httpupgrade'], true)
                 ? $this->buildVless($password, $server) : null,
             Server::TYPE_TROJAN => $this->buildTrojan($password, $server),
+            Server::TYPE_ANYTLS => $this->buildAnyTLS($password, $server),
             Server::TYPE_HYSTERIA => data_get($server, 'protocol_settings.version') === 2
                 ? $this->buildHysteria($password, $server) : null,
             default => null,
@@ -792,7 +798,7 @@ class SingBox extends AbstractProtocol
             "server" => $server['host'],
             "server_port" => $server['port'],
             "uuid" => $password,
-            "packet_encoding" => "xudp",
+            "packet_encoding" => !empty($server['external']) ? data_get($protocol_settings, 'packet_encoding', 'xudp') : 'xudp',
         ];
         if ($flow = data_get($protocol_settings, 'flow')) {
             $array['flow'] = $flow;
@@ -1006,6 +1012,14 @@ class SingBox extends AbstractProtocol
             $array['tls']['server_name'] = $serverName;
         }
         $this->appendEch($array['tls'], data_get($protocol_settings, 'tls.ech'));
+
+        if (!empty($server['external'])) {
+            unset($array['tls']['alpn']);
+            if ($alpn = data_get($protocol_settings, 'tls.alpn')) {
+                $array['tls']['alpn'] = (array) $alpn;
+            }
+            $this->appendUtls($array['tls'], $protocol_settings);
+        }
 
         return $array;
     }

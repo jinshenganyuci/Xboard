@@ -16,6 +16,7 @@ class ExternalSubscriptionNode extends Model
         'supported' => 'boolean',
         'sort_order' => 'integer',
         'health_checked_at' => 'integer',
+        'health_latency_ms' => 'integer',
         'health_due_at' => 'integer',
         'health_revision' => 'integer',
     ];

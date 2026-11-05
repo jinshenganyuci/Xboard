@@ -5,21 +5,22 @@
 ## 仓库与当前基线
 
 - Fork 为 `https://github.com/jinshenganyuci/Xboard`，二开基线分支为 `feat/third-party-subscriptions`。新任务先检查分支、HEAD 和工作区，不要假定默认分支包含这些功能，也不要覆盖已有未提交修改。
-- 本次交接记录于 2026-11-04。最近已发布的功能版本是 `external-v1.0.5`，源码提交 `86a03f80699a91f970a2a45705c54655aa317f66`。此记录是基线，不代表未来始终为最新版。
+- 功能说明更新于 2026-11-05。已发布的历史基线为 `external-v1.0.5`，源码提交 `86a03f80699a91f970a2a45705c54655aa317f66`；下文描述当前分支实现，不表示新增功能已经发布。实际发布版本以标签和成功的发布任务为准。
 - 发布镜像为 `ghcr.io/jinshenganyuci/xboard`，使用 `Dockerfile.external` 和 `.github/workflows/publish-external-image.yml`。上游 README 的 `compose` 分支和普通 Dockerfile 不是此二开的发布入口。
 - 日常代码修改和基础测试适合云端开发环境；完整容器验收和镜像发布沿用 GitHub Actions。生产站点及其数据仍由部署服务器持有。
 
 ## 必须保持的行为
 
 - 第三方节点仅下发给存在、未封禁、有关联套餐且未到期的用户；永久有效套餐沿用原规则。第三方节点不检查本地流量额度，自建节点保持原有资格规则。
-- 仅下发启用源中已勾选、上游仍存在且可完整转换的节点。目前支持 VLESS、Trojan、Hysteria2；输入为 URI、Base64 URI、Clash YAML，输出为通用订阅、Mihomo / Clash Meta、Sing-box。不要丢弃关键连接参数来假装支持节点。
+- 仅下发启用源中已勾选、上游仍存在且可完整转换的节点。目前支持 VLESS、Trojan、Hysteria2、AnyTLS；输入为 URI、Base64 URI、Clash YAML，输出为通用订阅、Mihomo / Clash Meta、Sing-box 等已适配格式。客户端也必须支持目标协议。不要丢弃关键连接参数来假装支持节点；VLESS 的 `packetEncoding=none` 必须保留禁用额外包编码的语义，不得改回默认 XUDP。
 - 保留上游名称，不添加 `〔外部〕` 或其他来源后缀；重名时才追加唯一序号。所有符合资格的用户共用同一组选择及上游凭据，不引入额外流量控制。
 - 成功同步按完整快照处理，物理删除已消失的节点及勾选。有效空快照清空节点；拉取或解析失败保留旧快照。重新出现的节点默认不勾选，凭据更新保持同一节点的原选择。
 - 镜像内独立同步 worker 每 60 秒扫描，源成功同步满 5 分钟才拉取，通常约 5–6 分钟更新；失败有 60 秒冷却。不要依赖管理员打开页面来同步。
 - 已启用、已选择且支持的节点通常每小时测活一次，全站最多并发两个探测。首次明确失败转灰色待复查，5 分钟后备用目标复查；确认失败且控制请求正常才离线。成功在线，基础设施异常未知，超过 2 小时的结果未知。
+- 延迟复用同一次代理 HTTPS 检测，不另起探测任务。`health_latency_ms` 保存请求耗时，管理节点接口和用户节点接口以 `latency_ms` 返回；只有在线且未过期时有值，其余为 `null`，不能显示成 `0 ms`。这是面板服务器经节点到检测站点的耗时，不是用户本机 ping，也不包含探测进程的启动时间。
 - 测活必须通过真实节点凭据代理 HTTPS 204 请求。TCP 端口开放、直接访问目标成功都不能判节点在线。保留固定目标、公共地址校验、DNS 固定、超时、Redis 锁、租约及版本条件写入，防止重复检测或旧结果覆盖新配置。
 - 打开用户面板、更新订阅及内容相同的同步不额外测活；离线状态只影响面板展示，不改变已勾选节点的下发资格。
-- 默认主题蓝色在线、红色离线、灰色待复查或未知，并显示检测时间。保留原生节点行为。健康状态资源由 `DefaultThemeHealthAsset` 校验并生成，不直接改上游编译 bundle，不强行覆盖自定义主题。
+- 管理页显示延迟、最近检测时间及未勾选/停用/待检测等状态；默认主题蓝色在线、红色离线、灰色待复查或未知，在线时显示有效延迟。保留原生节点行为。健康状态资源由 `DefaultThemeHealthAsset` 校验并生成，当前使用 v2 资源；不要改写有强缓存的旧资源，不直接改上游编译 bundle，不强行覆盖自定义主题。
 
 ## 代码入口
 
@@ -31,7 +32,7 @@
 | 用户面板节点接口 | `app/Http/Controllers/V1/User/ServerController.php` |
 | 主题资源生成及展示 | `app/Support/DefaultThemeHealthAsset.php`、`public/assets/external-subscriptions/`、`theme/Xboard/dashboard.blade.php` |
 | 独立后台进程 | `.docker/external-subscriptions/worker.sh`、`supervisor.conf`，以及 `app/Console/Commands/` 下的同步和测活命令 |
-| 数据表 | `database/migrations/2026_10_21_000001_create_external_subscriptions_tables.php`、`2026_11_03_000001_add_external_node_health.php` |
+| 数据表 | `database/migrations/2026_10_21_000001_create_external_subscriptions_tables.php`、`2026_11_03_000001_add_external_node_health.php`、`2026_11_05_000001_add_external_node_latency.php` |
 
 ## 开发与测试
 
@@ -51,11 +52,12 @@ vendor/bin/phpunit -c phpunit.external.xml
 ```bash
 php -r 'require "app/Support/DefaultThemeHealthAsset.php"; App\Support\DefaultThemeHealthAsset::build(getcwd());'
 node tests/browser/external-node-health.cjs
+node tests/browser/external-admin-latency.cjs
 ```
 
-生成的 `public/assets/external-subscriptions/xboard-dashboard-health-v1.js` 是构建产物，不要提交。交接文档还提供输出到临时目录的方式；优先使用该方式避免工作区残留，不能删除原本就存在且来源不明的文件。
+生成的 `public/assets/external-subscriptions/xboard-dashboard-health-v2.js` 是构建产物，不要提交。交接文档还提供输出到临时目录的方式；优先使用该方式避免工作区残留，不能删除原本就存在且来源不明的文件。
 
-真实协议回归需要 Docker Engine / Compose 和 OpenSSL。先按交接文档构建待测代码的本地镜像，再运行；不能拿旧 `latest` 镜像的通过结果代表当前修改。
+真实 VLESS、Trojan、Hysteria2、AnyTLS 协议及延迟回归需要 Docker Engine / Compose 和 OpenSSL。先按交接文档构建待测代码的本地镜像，再运行；不能拿旧 `latest` 镜像的通过结果代表当前修改。
 
 ```bash
 XBOARD_HEALTH_TEST_IMAGE=xboard-external:candidate .github/scripts/run-health-smoke.sh
@@ -74,7 +76,7 @@ XBOARD_HEALTH_TEST_IMAGE=xboard-external:candidate .github/scripts/run-health-sm
 
 ## 数据与升级
 
-- 第三方订阅源和节点存于原 Xboard 数据库的新增表；源 URL 和连接配置由原 `APP_KEY` 加密。新增健康字段也在节点表中，Redis 用于缓存和锁。
+- 第三方订阅源和节点存于原 Xboard 数据库的新增表；源 URL 和连接配置由原 `APP_KEY` 加密。新增健康字段也在节点表中；`2026_11_05_000001_add_external_node_latency.php` 只新增可空的 `health_latency_ms` 无符号整数字段。Redis 用于缓存和锁。
 - 不提交或输出真实 `.env`、订阅 URL/token、节点凭据、管理员账号文件、SQLite 数据库、私钥或生产备份。云端测试创建合成数据，不复制本机私密文件。
 - 已有站点升级保留 `.env`、`APP_KEY`、数据库和所有原有数据挂载，仅按发布文档换镜像；不要再次运行安装，不要重新生成生产密钥。
 - 回退使用升级前固定镜像及兼容的数据状态，保留附加表；不要执行 `migrate:rollback` / `xboard:rollback`。过去验证过的版本组合不等于所有未来迁移都可以直接回退，新增迁移必须评估并说明兼容范围。

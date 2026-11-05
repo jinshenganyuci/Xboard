@@ -6,6 +6,7 @@ use App\Models\ExternalSubscription;
 use App\Models\ExternalSubscriptionNode;
 use App\Models\Server;
 use App\Models\User;
+use App\Services\ExternalSubscription\ProbeTransport;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -175,6 +176,7 @@ class DeliveryTest extends TestCase
         $response->assertJsonCount(1, 'data')->assertJsonPath('data.0.external', true)
             ->assertJsonPath('data.0.name', 'Dashboard node');
         $this->assertNull($response->json('data.0.is_online'));
+        $this->assertNull($response->json('data.0.latency_ms'));
         foreach (['password', 'config', 'host', 'url', 'source_id'] as $field) {
             $this->assertArrayNotHasKey($field, $response->json('data.0'));
         }
@@ -188,10 +190,11 @@ class DeliveryTest extends TestCase
 
     public function test_dashboard_returns_checked_states_without_exposing_node_details_and_changes_etag_on_recheck(): void
     {
+        $this->mock(ProbeTransport::class)->shouldNotReceive('measure');
         $at = time() - 10;
-        $online = $this->externalNode('Online', ['health_status' => 'online', 'health_checked_at' => $at]);
-        $this->externalNode('Offline', ['health_status' => 'offline', 'health_checked_at' => $at]);
-        $this->externalNode('Pending', ['health_status' => 'pending', 'health_checked_at' => $at]);
+        $online = $this->externalNode('Online', ['health_status' => 'online', 'health_checked_at' => $at, 'health_latency_ms' => 231]);
+        $this->externalNode('Offline', ['health_status' => 'offline', 'health_checked_at' => $at, 'health_latency_ms' => 231]);
+        $this->externalNode('Pending', ['health_status' => 'pending', 'health_checked_at' => $at, 'health_latency_ms' => 231]);
         $this->externalNode('Unknown');
         $this->externalNode('Not selected', ['selected' => false]);
         Sanctum::actingAs($this->user());
@@ -203,17 +206,24 @@ class DeliveryTest extends TestCase
             $this->assertSame(strtolower($name), $row['health_status']);
             $this->assertSame($expected, $row['is_online']);
             $this->assertSame($name === 'Unknown' ? null : $at, $row['last_check_at']);
-            foreach (['config', 'host', 'url', 'password', 'source_id', 'health_revision', 'health_due_at'] as $field) {
+            $this->assertSame($name === 'Online' ? 231 : null, $row['latency_ms']);
+            foreach (['config', 'host', 'url', 'password', 'source_id', 'health_revision', 'health_due_at', 'health_latency_ms'] as $field) {
                 $this->assertArrayNotHasKey($field, $row);
             }
         }
         $this->assertStringNotContainsString('upstream-password', $response->getContent());
 
         $etag = $response->headers->get('ETag');
+        $online->update(['health_latency_ms' => 99]);
+        $measured = $this->withHeader('If-None-Match', $etag)->getJson('/api/v1/user/server/fetch')->assertOk();
+        $this->assertNotSame($etag, $measured->headers->get('ETag'));
+        $this->assertSame(99, collect($measured->json('data'))->firstWhere('name', 'Online')['latency_ms']);
+        $etag = $measured->headers->get('ETag');
         $online->update(['health_status' => 'pending', 'health_checked_at' => $at + 2]);
         $next = $this->withHeader('If-None-Match', $etag)->getJson('/api/v1/user/server/fetch')->assertOk();
         $this->assertNotSame($etag, $next->headers->get('ETag'));
         $this->assertSame('pending', collect($next->json('data'))->firstWhere('name', 'Online')['health_status']);
+        $this->assertNull(collect($next->json('data'))->firstWhere('name', 'Online')['latency_ms']);
     }
 
     public function test_external_names_cannot_collide_with_native_names_after_merging(): void

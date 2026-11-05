@@ -62,6 +62,7 @@ function runChecks(): void
         'vless://75fc28e4-e2fa-4584-9685-f8f1651a6336@11.254.233.2:19001?security=tls&sni=health.fixture.invalid#VLESS',
         'trojan://health-fixture-secret@11.254.233.2:19002?security=tls&sni=health.fixture.invalid#Trojan',
         'hysteria2://health-fixture-secret@11.254.233.2:19003?sni=health.fixture.invalid#HY2',
+        'anytls://health-fixture-secret@11.254.233.2:19004?security=tls&type=tcp&packetEncoding=none&sni=health.fixture.invalid&udp=1#AnyTLS',
         'vless://06aa6fde-4c0f-42ed-8efb-35c1772a8402@11.254.233.2:19001?security=tls&sni=health.fixture.invalid#Account',
         'trojan://health-fixture-secret@11.254.233.2:19002?security=tls&sni=health.fixture.invalid#Unselected',
     ];
@@ -76,20 +77,21 @@ function runChecks(): void
         $row = $dashboard()->get($name);
         check($row && $row['health_status'] === $status && $row['is_online'] === $online, 'Dashboard ' . $name . ' expected ' . $status . ' but observed ' . ($row['health_status'] ?? 'missing'));
         check(is_int($row['last_check_at']), 'Missing last check time');
+        check($online === true ? is_int($row['latency_ms']) && $row['latency_ms'] > 0 : $row['latency_ms'] === null, 'Latency must describe only a fresh successful proxy request');
         check(!array_intersect(['config', 'password', 'url', 'host'], array_keys($row)), 'Private configuration in dashboard');
     };
-    // First cycle MUST be automatic. All three real protocols and an open TLS port
+    // First cycle MUST be automatic. All four real protocols and an open TLS port
     // with invalid credentials share the same cert and reachable HTTPS destination.
     until(function () use ($nodes) {
-        foreach (['VLESS'=>'online','Trojan'=>'online','HY2'=>'online','Account'=>'pending'] as $name=>$state) {
+        foreach (['VLESS'=>'online','Trojan'=>'online','HY2'=>'online','AnyTLS'=>'online','Account'=>'pending'] as $name=>$state) {
             if ($nodes[$name]->fresh()->health_status !== $state) { return false; }
         }
         return true;
     }, 160, 'Automatic real protocol checks did not finish with expected states');
-    foreach (['VLESS','Trojan','HY2'] as $name) { $expect($name, 'online', true); }
+    foreach (['VLESS','Trojan','HY2','AnyTLS'] as $name) { $expect($name, 'online', true); }
     $expect('Account', 'pending', null);
     check(!$dashboard()->has('Unselected') && $nodes['Unselected']->fresh()->health_checked_at === null, 'Unselected node was probed or published');
-    print "PASS: unattended VLESS/Trojan/Hysteria2 HTTPS probes and first invalid-credential failure\n";
+    print "PASS: unattended VLESS/Trojan/Hysteria2/AnyTLS HTTPS latency and first invalid-credential failure\n";
     $account = $nodes['Account'];
     $next = $account->fresh()->health_due_at;
     check($next > time() && $next <= time()+301, 'Confirmation not due within five minutes');

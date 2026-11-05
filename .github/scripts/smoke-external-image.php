@@ -108,7 +108,7 @@ function subscriptionNodes(array $response, string $format): array
     }
     if ($format === 'sing-box') {
         $document = json_decode($response['body'], true, 512, JSON_THROW_ON_ERROR);
-        $nodes = array_filter($document['outbounds'] ?? [], fn ($node) => in_array($node['type'] ?? '', ['vless', 'trojan', 'hysteria2'], true));
+        $nodes = array_filter($document['outbounds'] ?? [], fn ($node) => in_array($node['type'] ?? '', ['vless', 'trojan', 'hysteria2', 'anytls'], true));
         foreach ($nodes as $node) {
             if ($node['type'] === 'hysteria2') {
                 verify(($node['server_ports'] ?? []) === ['443:443', '20000:21000'], 'Sing-box lost Hysteria2 hopping ports.');
@@ -125,7 +125,7 @@ function subscriptionNodes(array $response, string $format): array
     verify(!str_contains($decoded, 'TOT:'), 'External-only Shadowrocket response reports local quota.');
     $nodes = [];
     foreach (preg_split('/\R/', $decoded) as $line) {
-        if (!preg_match('/^(vless|trojan|hysteria2):\/\//', $line, $match)) {
+        if (!preg_match('/^(vless|trojan|hysteria2|anytls):\/\//', $line, $match)) {
             continue;
         }
         if ($format === 'shadowrocket' && $match[1] === 'vless') {
@@ -179,7 +179,7 @@ try {
     $stage = 'web pages and assets';
     foreach (['/', '/' . $securePath, '/' . $securePath . '/external-subscriptions',
         '/assets/external-subscriptions/app.js', '/assets/external-subscriptions/app.css',
-        '/assets/external-subscriptions/node-health-v1.js', '/assets/external-subscriptions/node-health-v1.css',
+        '/assets/external-subscriptions/node-health-v2.js', '/assets/external-subscriptions/node-health-v2.css',
         App\Support\DefaultThemeHealthAsset::URL] as $path) {
         $response = requestLocal('GET', $path);
         expectStatus($response, 200);
@@ -206,15 +206,16 @@ try {
         'vless://11111111-2222-4333-8444-555555555555@vless.example.com:443?security=tls&sni=tls.example.com&type=ws&host=ws.example.com&path=%2Fsmoke#ReleaseSmokeVLESS',
         'hysteria2://synthetic%40hy2%2Fpassword@hy2.example.com:443?sni=tls.example.com&obfs=salamander&obfs-password=synthetic-obfs&mport=443%2C20000-21000#ReleaseSmokeHy2',
         'trojan://synthetic%40trojan%2Fpassword@trojan.example.com:443?security=tls&sni=tls.example.com&type=grpc&serviceName=smoke#ReleaseSmokeTrojan',
+        'anytls://synthetic%40anytls%3A%2Fpassword@anytls.example.com:443?security=tls&type=tcp&packetEncoding=none&sni=tls.example.com&udp=1#ReleaseSmokeAnyTLS',
     ];
     $parsed = app(Parser::class)->parse(implode("\n", $fixtureUris));
-    verify(count($parsed) === 3 && collect($parsed)->every(fn ($node) => $node['supported']), 'Synthetic fixture parsing failed.');
+    verify(count($parsed) === 4 && collect($parsed)->every(fn ($node) => $node['supported']), 'Synthetic fixture parsing failed.');
     $nodes = [];
     foreach ($parsed as $index => $node) {
         $nodes[] = $source->nodes()->create($node + ['selected' => false, 'present' => true, 'sort_order' => $index]);
     }
 
-    foreach ([[0, 1], [1, 2]] as $selection) {
+    foreach ([[0, 1], [1, 2], [2, 3]] as $selection) {
         $stage = 'administrator node selection';
         $ids = array_map(fn ($index) => $nodes[$index]->id, $selection);
         $selected = requestLocal('POST', $api . 'select', ['id' => $source->id, 'node_ids' => $ids], $adminAuth);
@@ -225,7 +226,7 @@ try {
         $listing = requestLocal('GET', $api . 'nodes?id=' . $source->id, null, $adminAuth);
         expectStatus($listing, 200);
         $listed = responseData($listing);
-        verify(count($listed) === 3 && count(array_filter($listed, fn ($node) => $node['selected'])) === 2, 'Node listing selection is inconsistent.');
+        verify(count($listed) === 4 && count(array_filter($listed, fn ($node) => $node['selected'])) === 2, 'Node listing selection is inconsistent.');
         foreach ($listed as $node) {
             verify(!array_key_exists('config', $node) && !array_key_exists('password', $node), 'Node-management API exposes credentials.');
         }
@@ -263,6 +264,7 @@ try {
             verify(!array_key_exists($field, $node), 'User dashboard exposes private node fields.');
         }
         verify(($node['external'] ?? false) === true && ($node['health_status'] ?? null) === 'unknown' && array_key_exists('is_online', $node) && $node['is_online'] === null, 'Unprobed node is not marked unknown.');
+        verify(array_key_exists('latency_ms', $node) && $node['latency_ms'] === null, 'Unprobed node has a fabricated latency.');
     }
 
     // Exercise the same service used by manual and scheduled synchronization.
@@ -276,7 +278,7 @@ try {
     };
     $stage = 'upstream deletion removes selected and unselected nodes';
     $counts = $syncFixture($fixtureUris[2]);
-    verify($counts['removed'] === 2 && $source->nodes()->count() === 1, 'Deleted upstream nodes remain stored.');
+    verify($counts['removed'] === 3 && $source->nodes()->count() === 1, 'Deleted upstream nodes remain stored.');
     verify($source->nodes()->firstOrFail()->selected, 'A surviving node lost its selection.');
     $listing = requestLocal('GET', $api . 'nodes?id=' . $source->id, null, $adminAuth);
     expectStatus($listing, 200);
@@ -300,7 +302,7 @@ try {
 
     $stage = 'returning upstream nodes are not automatically selected';
     $syncFixture(implode("\n", $fixtureUris));
-    verify($source->nodes()->count() === 3 && $source->nodes()->where('selected', true)->count() === 0, 'A returning node regained its old selection.');
+    verify($source->nodes()->count() === 4 && $source->nodes()->where('selected', true)->count() === 0, 'A returning node regained its old selection.');
     verify(subscriptionNodes(requestLocal('GET', '/api/v1/client/subscribe?' . http_build_query(['token' => $users['active']->token, 'flag' => 'general'])), 'general') === [], 'Returning unselected nodes were delivered.');
 } catch (Throwable $exception) {
     $failure = $stage . ': ' . ($exception instanceof SmokeFailure ? $exception->getMessage() : 'Unexpected ' . get_class($exception) . '; details intentionally suppressed.');

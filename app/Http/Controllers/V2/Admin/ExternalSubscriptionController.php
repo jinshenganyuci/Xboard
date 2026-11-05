@@ -104,7 +104,12 @@ class ExternalSubscriptionController extends Controller
         $source = $this->source($request);
         $nodes = $source->nodes()->where('present', true)->orderBy('sort_order')->orderBy('id')->get([
             'id', 'source_id', 'name', 'type', 'selected', 'present', 'supported', 'error', 'sort_order',
+            'health_status', 'health_checked_at', 'health_latency_ms',
         ]);
+        foreach ($nodes as $node) {
+            $node->setRelation('source', $source);
+        }
+        $statuses = app(HealthService::class)->statuses($nodes);
 
         return response()->json(['data' => $nodes->map(fn ($node) => [
             'id' => $node->id,
@@ -115,6 +120,9 @@ class ExternalSubscriptionController extends Controller
             'supported' => (bool) $node->supported,
             'error' => $node->error,
             'sort_order' => $node->sort_order,
+            'health_status' => $statuses[$node->id]['health_status'],
+            'last_check_at' => $statuses[$node->id]['last_check_at'],
+            'latency_ms' => $statuses[$node->id]['latency_ms'],
         ])]);
     }
 

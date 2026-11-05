@@ -159,12 +159,44 @@
       if (node.error) nameCell.append(element('span', 'node-error', node.error));
       const statusCell = element('td');
       statusCell.append(element('span', `badge${eligible(node) ? ' enabled' : ' warning'}`, !node.present ? '上游已移除' : node.supported ? '可下发' : '不支持'));
-      row.append(checkboxCell, nameCell, element('td', 'protocol', protocolLabel(node)), statusCell);
+      row.append(checkboxCell, nameCell, element('td', 'protocol', protocolLabel(node)), statusCell, renderHealth(node));
       list.append(row);
     }
     $('nodes-empty').hidden = nodes.length > 0;
     $('nodes-empty').querySelector('p').textContent = state.nodes.length ? '没有匹配的节点，试试其他关键词。' : '暂无节点。点击「同步节点」从第三方订阅获取。';
     renderSelection();
+  }
+
+  function renderHealth(node) {
+    const cell = element('td', 'node-health');
+    const active = eligible(node) && current()?.enabled && state.saved.has(node.id);
+    const checked = typeof node.last_check_at === 'number' && node.last_check_at > 0
+      ? new Date(node.last_check_at * 1000) : null;
+    const checkedText = checked && Number.isFinite(checked.getTime())
+      ? `最近检测：${checked.toLocaleString('zh-CN', { hour12: false })}` : '尚无检测记录';
+    const status = active && ['online', 'offline', 'pending'].includes(node.health_status) ? node.health_status : 'unknown';
+    const latency = status === 'online' && Number.isSafeInteger(node.latency_ms) && node.latency_ms >= 0 ? node.latency_ms : null;
+    let label = '待检测';
+    if (!eligible(node)) label = '不检测';
+    else if (!current()?.enabled) label = '订阅源已停用';
+    else if (!state.saved.has(node.id)) label = '未勾选';
+    else if (status === 'online') label = latency === null ? '在线 · 暂无延迟' : `${latency} ms`;
+    else if (status === 'offline') label = '离线';
+    else if (status === 'pending') label = '待复查';
+    else if (checked) label = '暂无有效结果';
+    cell.dataset.health = active ? status : 'inactive';
+    const result = element('span', 'node-health-result', label);
+    if (active) {
+      const dot = element('span', 'node-health-dot');
+      dot.setAttribute('aria-hidden', 'true');
+      result.prepend(dot);
+    }
+    cell.append(result);
+    if (active) {
+      cell.append(element('span', 'node-health-time', checkedText));
+      cell.title = `${status === 'online' ? '在线\n' : ''}${label}\n${checkedText}\n面板服务器经节点到检测站点的请求耗时，非本机延迟。`;
+    }
+    return cell;
   }
 
   function renderSelection() {
@@ -188,9 +220,9 @@
     renderSources();
   }
 
-  async function loadNodes(id) {
+  async function loadNodes(id, preserveView = false) {
     const nodes = await request(`${apiBase}/nodes?id=${encodeURIComponent(id)}`);
-    applyNodes(id, nodes);
+    applyNodes(id, nodes, preserveView);
   }
 
   function applyNodes(id, nodes, preserveView = false) {
@@ -336,7 +368,7 @@
       await api('select', { id, node_ids: [...state.selected] });
       state.saved = new Set(state.selected);
       await loadSources();
-      renderDetail();
+      await loadNodes(id, true);
       notify(current()?.enabled ? '勾选已保存，用户下次更新订阅时生效。' : '勾选已保存。启用此订阅源后才会下发给用户。');
     });
   });

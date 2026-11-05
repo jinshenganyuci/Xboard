@@ -4,6 +4,7 @@ namespace Tests\Unit\ExternalSubscription;
 
 use App\Services\ExternalSubscription\Fetcher;
 use App\Services\ExternalSubscription\Parser;
+use App\Services\ExternalSubscription\ProbeResult;
 use App\Services\ExternalSubscription\ProbeTransport;
 use Illuminate\Support\Facades\Cache;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -29,10 +30,10 @@ class ProbeTransportTest extends TestCase
                 return $this->ips;
             }
 
-            protected function request204(string $target, array $networkOptions, int $timeoutMs): ?bool
+            protected function request204(string $target, array $networkOptions, int $timeoutMs): ProbeResult
             {
                 $this->controls[] = [$target, $networkOptions, $timeoutMs];
-                return $this->baseline;
+                return new ProbeResult($this->baseline, 7);
             }
 
             public function outbound(string $uri, bool $backup = false): array
@@ -55,6 +56,11 @@ class ProbeTransportTest extends TestCase
             }
 
             public function control(?bool $value, bool $backup): ?bool
+            {
+                return $this->applyBackupControl(new ProbeResult($value), $backup)->online;
+            }
+
+            public function controlledResult(ProbeResult $value, bool $backup): ProbeResult
             {
                 return $this->applyBackupControl($value, $backup);
             }
@@ -144,6 +150,42 @@ class ProbeTransportTest extends TestCase
             $this->assertCount(1, $unreachable->controls);
         } finally {
             $this->travelBack();
+        }
+    }
+
+    public function test_only_a_successful_proxy_keeps_its_own_latency_and_control_never_supplies_it(): void
+    {
+        config()->set('cache.default', 'array');
+        Cache::store('array')->flush();
+        $probe = $this->harness();
+        $success = new ProbeResult(true, 183);
+        $this->assertSame($success, $probe->controlledResult($success, true));
+        $this->assertSame(183, $probe->controlledResult($success, false)->latencyMs);
+        $this->assertSame([], $probe->controls);
+
+        $failed = $probe->controlledResult(new ProbeResult(false, 183), true);
+        $this->assertFalse($failed->online);
+        $this->assertNull($failed->latencyMs, 'The successful direct control measured 7 ms but cannot supply proxy latency.');
+        $unknown = $probe->controlledResult(new ProbeResult(null, 183), true);
+        $this->assertNull($unknown->online);
+        $this->assertNull($unknown->latencyMs);
+        $this->assertCount(1, $probe->controls);
+    }
+
+    public function test_request_timings_are_rounded_to_milliseconds_only_for_verified_success(): void
+    {
+        $this->assertSame(124, ProbeResult::fromSeconds(true, 0.1236)->latencyMs);
+        $this->assertSame(1, ProbeResult::fromSeconds(true, 0.0001)->latencyMs);
+        $this->assertSame(1, ProbeResult::fromSeconds(true, 0.0)->latencyMs);
+        $this->assertSame(4294967295, ProbeResult::fromSeconds(true, 4294967.295)->latencyMs);
+        $this->assertSame(1, (new ProbeResult(true, 0))->latencyMs);
+        $this->assertNull((new ProbeResult(true, -1))->latencyMs);
+        $this->assertNull((new ProbeResult(true, 4294967296))->latencyMs);
+        foreach ([false, null] as $online) {
+            $this->assertNull(ProbeResult::fromSeconds($online, 0.1236)->latencyMs);
+        }
+        foreach ([-1.0, INF, NAN, 4294968.0] as $invalid) {
+            $this->assertNull(ProbeResult::fromSeconds(true, $invalid)->latencyMs);
         }
     }
 }

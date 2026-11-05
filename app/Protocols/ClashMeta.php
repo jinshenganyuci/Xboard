@@ -141,6 +141,18 @@ class ClashMeta extends AbstractProtocol
         ],
     ];
 
+    protected function isCompatible($server)
+    {
+        // Only these names report the Mihomo core's version; application
+        // wrappers such as Verge have an unrelated version scale.
+        if (!empty($server['external']) && $server['type'] === Server::TYPE_ANYTLS
+            && in_array($this->clientName, ['mihomo', 'meta'], true) && !empty($this->clientVersion)
+            && version_compare($this->clientVersion, '1.19.3', '<')) {
+            return false;
+        }
+        return parent::isCompatible($server);
+    }
+
     public function handle()
     {
         $servers = $this->servers;
@@ -488,6 +500,9 @@ class ClashMeta extends AbstractProtocol
             'tls' => false
         ];
 
+        if (!empty($server['external']) && array_key_exists('packet_encoding', $protocol_settings)) {
+            $array['packet-encoding'] = $protocol_settings['packet_encoding'];
+        }
         switch (data_get($protocol_settings, 'tls')) {
             case 1:
                 $array['tls'] = true;
@@ -760,6 +775,14 @@ class ClashMeta extends AbstractProtocol
             $array['skip-cert-verify'] = (bool) $allowInsecure;
         }
         self::appendEch($array, data_get($protocol_settings, 'tls.ech'));
+
+        if (!empty($server['external'])) {
+            $array['skip-cert-verify'] = (bool) data_get($protocol_settings, 'tls.allow_insecure', false);
+            if ($alpn = data_get($protocol_settings, 'tls.alpn')) {
+                $array['alpn'] = (array) $alpn;
+            }
+            self::appendUtls($array, $protocol_settings);
+        }
 
         return $array;
     }

@@ -66,7 +66,7 @@ class Parser
         foreach ($entries as $index => $entry) {
             $name = $this->displayName($entry, $index);
             $type = is_array($entry) ? ($entry['type'] ?? 'unknown') : (strstr($entry, ':', true) ?: 'unknown');
-            $type = in_array($type, ['vless', 'trojan', 'hysteria2', 'hy2', 'hysteria', 'ss', 'ssr', 'vmess'], true) ? $type : 'unknown';
+            $type = in_array($type, ['vless', 'trojan', 'anytls', 'hysteria2', 'hy2', 'hysteria', 'ss', 'ssr', 'vmess'], true) ? $type : 'unknown';
             try {
                 $config = $format === 'uri' ? $this->fromUri($entry, $name) : $this->fromClash($entry, $name);
                 $fingerprint = hash('sha256', json_encode([$config['type'], strtolower($config['host']), $config['port'], $name], JSON_UNESCAPED_UNICODE));
@@ -134,7 +134,7 @@ class Parser
             $query[$key] = rawurldecode($value);
         }
         $scheme = strtolower($parts['scheme']);
-        $port = $parts['port'] ?? (in_array($scheme, ['hy2', 'hysteria2'], true) ? 443 : null);
+        $port = $parts['port'] ?? (in_array($scheme, ['hy2', 'hysteria2', 'anytls'], true) ? 443 : null);
         return $this->build($scheme, trim($parts['host'], '[]'), $port, rawurldecode($parts['user']), $name, $query);
     }
 
@@ -143,7 +143,7 @@ class Parser
         if (!is_array($node)) {
             throw new RuntimeException('Clash 节点必须是对象。');
         }
-        $this->onlyKeys($node, ['name', 'type', 'server', 'port', 'ports', 'hop-interval', 'uuid', 'password', 'network', 'tls', 'servername', 'sni', 'skip-cert-verify', 'client-fingerprint', 'alpn', 'flow', 'reality-opts', 'ws-opts', 'grpc-opts', 'h2-opts', 'udp', 'tfo', 'obfs', 'obfs-password', 'up', 'down']);
+        $this->onlyKeys($node, ['name', 'type', 'server', 'port', 'ports', 'hop-interval', 'uuid', 'password', 'network', 'tls', 'servername', 'sni', 'skip-cert-verify', 'client-fingerprint', 'alpn', 'flow', 'reality-opts', 'ws-opts', 'grpc-opts', 'h2-opts', 'udp', 'tfo', 'obfs', 'obfs-password', 'up', 'down', 'packet-encoding']);
         if ((isset($node['udp']) && $node['udp'] !== true) || !empty($node['tfo'])) {
             throw new RuntimeException('节点包含当前无法保真的 UDP/TFO 设置。');
         }
@@ -161,6 +161,9 @@ class Parser
             }
         }
         $q = [];
+        if (isset($node['packet-encoding'])) {
+            $q['packetEncoding'] = $node['packet-encoding'];
+        }
         foreach (['sni' => 'sni', 'servername' => 'servername', 'flow' => 'flow', 'client-fingerprint' => 'fp', 'obfs' => 'obfs', 'obfs-password' => 'obfs-password', 'up' => 'upmbps', 'down' => 'downmbps', 'ports' => 'mport', 'hop-interval' => 'hop-interval'] as $key => $target) {
             if (isset($node[$key])) {
                 $q[$target] = $node[$key];
@@ -216,8 +219,8 @@ class Parser
 
     private function build(string $type, string $host, mixed $port, string $credential, string $name, array $q): array
     {
-        if (!in_array($type, ['vless', 'trojan', 'hysteria2', 'hy2'], true)) {
-            throw new RuntimeException('首版仅支持 VLESS、Trojan 和 Hysteria2。');
+        if (!in_array($type, ['vless', 'trojan', 'anytls', 'hysteria2', 'hy2'], true)) {
+            throw new RuntimeException('目前支持 VLESS、Trojan、Hysteria2 和 AnyTLS。');
         }
         // Common URI generators emit empty placeholders for transports they do not use.
         // Only known, semantically empty defaults are removed; real pinning/QUIC settings fail closed.
@@ -229,7 +232,7 @@ class Parser
         if (isset($q['quicSecurity']) && in_array($q['quicSecurity'], ['', 'none'], true) && ($q['type'] ?? 'tcp') !== 'quic') {
             unset($q['quicSecurity']);
         }
-        $this->onlyKeys($q, ['type', 'security', 'sni', 'servername', 'peer', 'allowInsecure', 'insecure', 'alpn', 'fp', 'pbk', 'sid', 'flow', 'encryption', 'path', 'host', 'serviceName', 'mode', 'headerType', 'obfs', 'obfs-password', 'upmbps', 'downmbps', 'mport', 'hop-interval']);
+        $this->onlyKeys($q, ['type', 'security', 'sni', 'servername', 'peer', 'allowInsecure', 'insecure', 'alpn', 'fp', 'pbk', 'sid', 'flow', 'encryption', 'path', 'host', 'serviceName', 'mode', 'headerType', 'obfs', 'obfs-password', 'upmbps', 'downmbps', 'mport', 'hop-interval', 'packetEncoding', 'udp']);
         foreach ($q as $value) {
             if (!is_scalar($value) || (is_string($value) && (strlen($value) > 4096 || preg_match('/[\x00-\x1f\x7f]/', $value)))) {
                 throw new RuntimeException('节点参数格式无效。');
@@ -265,7 +268,21 @@ class Parser
         }
         $settings = [];
         $ports = null;
-        if (in_array($type, ['hysteria2', 'hy2'], true)) {
+        if ($type === 'anytls') {
+            $this->onlyKeys($q, ['type', 'security', 'sni', 'servername', 'peer', 'allowInsecure', 'insecure', 'alpn', 'fp', 'packetEncoding', 'udp']);
+            if (($q['security'] ?? 'tls') !== 'tls' || ($q['type'] ?? 'tcp') !== 'tcp') {
+                throw new RuntimeException('AnyTLS 仅支持 TLS / TCP 传输。');
+            }
+            // AnyTLS has its own UoT framing, not VLESS packetaddr/xudp. Some
+            // URI generators emit this no-op placeholder for every protocol.
+            if (!in_array($q['packetEncoding'] ?? 'none', ['', 'none'], true)) {
+                throw new RuntimeException('AnyTLS 不支持额外的 UDP 包编码。');
+            }
+            if (isset($q['udp']) && !$this->boolean($q['udp'])) {
+                throw new RuntimeException('节点包含当前无法保真的 UDP 设置。');
+            }
+            $settings = ['tls' => $tls, 'utls' => ['enabled' => !empty($q['fp']), 'fingerprint' => !empty($q['fp']) ? $q['fp'] : 'chrome']];
+        } elseif (in_array($type, ['hysteria2', 'hy2'], true)) {
             $this->onlyKeys($q, ['sni', 'servername', 'peer', 'allowInsecure', 'insecure', 'alpn', 'obfs', 'obfs-password', 'upmbps', 'downmbps', 'mport', 'hop-interval']);
             $type = 'hysteria';
             $settings = ['version' => 2, 'tls' => $tls];
@@ -296,7 +313,7 @@ class Parser
                 }
             }
         } else {
-            $this->onlyKeys($q, ['type', 'security', 'sni', 'servername', 'peer', 'allowInsecure', 'insecure', 'alpn', 'fp', 'pbk', 'sid', 'flow', 'encryption', 'path', 'host', 'serviceName', 'mode', 'headerType']);
+            $this->onlyKeys($q, ['type', 'security', 'sni', 'servername', 'peer', 'allowInsecure', 'insecure', 'alpn', 'fp', 'pbk', 'sid', 'flow', 'encryption', 'path', 'host', 'serviceName', 'mode', 'headerType', 'packetEncoding']);
             $security = $q['security'] ?? ($type === 'trojan' ? 'tls' : 'none');
             if ($type === 'trojan' && $security === 'none') {
                 throw new RuntimeException('Trojan 暂不支持关闭 TLS。');
@@ -319,6 +336,14 @@ class Parser
                 throw new RuntimeException('节点 Flow 参数不受支持。');
             }
             $settings = ['tls' => array_search($security, ['none', 'tls', 'reality'], true), 'network' => $network, 'tls_settings' => $tls, 'flow' => $flow, 'utls' => ['enabled' => $security === 'reality' || !empty($q['fp']), 'fingerprint' => !empty($q['fp']) ? $q['fp'] : 'chrome']];
+            if (isset($q['packetEncoding'])) {
+                if ($type !== 'vless' || !in_array($q['packetEncoding'], ['', 'none', 'packetaddr', 'xudp'], true)) {
+                    throw new RuntimeException('节点的 UDP 包编码不受支持。');
+                }
+                // An explicit empty string disables packet encoding in sing-box;
+                // omitting the field would instead select its xudp default.
+                $settings['packet_encoding'] = $q['packetEncoding'] === 'none' ? '' : $q['packetEncoding'];
+            }
             if ($security === 'reality') {
                 if (empty($q['pbk']) || !preg_match('/^[a-zA-Z0-9_-]{43}=?$/D', $q['pbk']) || !preg_match('/^(?:[a-fA-F0-9]{2}){0,8}$/D', $q['sid'] ?? '')) {
                     throw new RuntimeException('Reality 公钥或 Short ID 无效。');

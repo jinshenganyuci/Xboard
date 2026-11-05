@@ -7,6 +7,7 @@ use App\Models\AdminAuditLog;
 use App\Models\ExternalSubscription;
 use App\Models\ExternalSubscriptionNode;
 use App\Models\User;
+use App\Services\ExternalSubscription\ProbeTransport;
 use App\Services\ExternalSubscription\SyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -107,6 +108,42 @@ class AdminTest extends TestCase
             ->assertJsonPath('data.0.name', '香港 01')
             ->assertJsonMissingPath('data.0.config');
         $this->assertStringNotContainsString('private-node-password', $response->getContent());
+    }
+
+    public function test_node_list_exposes_only_current_eligible_latency_without_running_probes(): void
+    {
+        Sanctum::actingAs($this->user(true));
+        $this->mock(ProbeTransport::class)->shouldNotReceive('measure');
+        $source = $this->source(['enabled' => true]);
+        $at = now()->timestamp - 10;
+        foreach ([
+            ['name' => 'Online'],
+            ['name' => 'Offline', 'health_status' => 'offline'],
+            ['name' => 'Pending', 'health_status' => 'pending'],
+            ['name' => 'Unknown', 'health_status' => 'unknown'],
+            ['name' => 'Stale', 'health_checked_at' => $at - 7200],
+            ['name' => 'Not selected', 'selected' => false],
+            ['name' => 'Unsupported', 'supported' => false],
+        ] as $attributes) {
+            $this->node($source, $attributes + ['selected' => true, 'health_status' => 'online',
+                'health_checked_at' => $at, 'health_latency_ms' => 186]);
+        }
+        $response = $this->getJson($this->endpoint('nodes?id=' . $source->id))->assertOk()->assertJsonCount(7, 'data');
+        foreach ($response->json('data') as $row) {
+            $this->assertSame($row['name'] === 'Online' ? 186 : null, $row['latency_ms']);
+            foreach (['config', 'health_latency_ms', 'health_revision', 'health_due_at'] as $field) {
+                $this->assertArrayNotHasKey($field, $row);
+            }
+        }
+        $this->assertStringNotContainsString('private-node-password', $response->getContent());
+
+        $this->postJson($this->endpoint('save'), ['id' => $source->id, 'name' => $source->name, 'enabled' => false])->assertOk();
+        $disabled = $this->getJson($this->endpoint('nodes?id=' . $source->id))->assertOk();
+        foreach ($disabled->json('data') as $row) {
+            $this->assertSame('unknown', $row['health_status']);
+            $this->assertNull($row['latency_ms']);
+            $this->assertNull($row['last_check_at']);
+        }
     }
 
     public function test_selection_rejects_foreign_missing_and_unsupported_nodes_without_changing_existing_selection(): void

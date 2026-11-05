@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="same-origin">
   <title>第三方订阅 · {{ $title }}</title>
-  <link rel="stylesheet" href="/assets/external-subscriptions/app.css?v=1">
-  <script defer src="/assets/external-subscriptions/app.js?v=2"></script>
+  <link rel="stylesheet" href="/assets/external-subscriptions/app.css?v=2">
+  <script defer src="/assets/external-subscriptions/app.js?v=3"></script>
 </head>
 <body data-api-base="/api/v2/{{ $secure_path }}/external-subscription">
   <header class="topbar">
@@ -59,7 +59,8 @@
               <label class="search-label"><span class="sr-only">搜索节点</span><input id="node-search" type="search" placeholder="搜索节点名称或协议…" autocomplete="off"></label>
               <button id="select-filtered" class="button small-button">勾选筛选结果</button><button id="clear-selection" class="text-button">清空勾选</button>
             </div>
-            <div class="table-scroll"><table><thead><tr><th class="check-col"><span class="sr-only">下发</span></th><th>节点名称</th><th>协议</th><th>状态</th></tr></thead><tbody id="nodes-list"></tbody></table></div>
+            <p class="health-note">已启用订阅源中，保存勾选的可下发节点每小时自动测活、测延迟。延迟为面板服务器经节点到检测站点的请求耗时，并非你的本机延迟；刷新列表只更新显示。</p>
+            <div class="table-scroll"><table><thead><tr><th class="check-col"><span class="sr-only">下发</span></th><th>节点名称</th><th>协议</th><th>下发状态</th><th class="health-col">延迟 / 检测</th></tr></thead><tbody id="nodes-list"></tbody></table></div>
             <div id="nodes-empty" class="empty-state compact" hidden><p></p></div>
             <footer class="selection-footer"><div><strong id="selection-count">已勾选 0 个节点</strong><p id="selection-note" class="muted small">保存勾选后，用户更新订阅时生效。</p></div><button id="save-selection" class="button primary">保存勾选</button></footer>
           </div>

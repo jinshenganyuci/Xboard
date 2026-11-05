@@ -242,7 +242,13 @@ class General extends AbstractProtocol
         }
         if (!empty($server['external'])) {
             $config['security'] = $config['security'] ?: 'none';
-            $config['mode'] = data_get($protocol_settings, 'network_settings.mode', 'gun');
+            unset($config['mode'], $config['spx']);
+            if (data_get($protocol_settings, 'network') === 'grpc') {
+                $config['mode'] = data_get($protocol_settings, 'network_settings.mode', 'gun');
+            }
+            if (array_key_exists('packet_encoding', $protocol_settings)) {
+                $config['packetEncoding'] = $protocol_settings['packet_encoding'] === '' ? 'none' : $protocol_settings['packet_encoding'];
+            }
         }
         $user = rawurlencode($uuid) . '@' . Helper::wrapIPv6($host) . ':' . $port;
         $query = http_build_query($config);
@@ -455,7 +461,17 @@ class General extends AbstractProtocol
             'sni' => data_get($protocol_settings, 'tls.server_name'),
             'insecure' => data_get($protocol_settings, 'tls.allow_insecure')
         ];
-        $query = http_build_query($params);
+        if (!empty($server['external'])) {
+            $password = rawurlencode($password);
+            if ($alpn = data_get($protocol_settings, 'tls.alpn')) {
+                $params['alpn'] = implode(',', (array) $alpn);
+            }
+            if ($fp = Helper::getTlsFingerprint(data_get($protocol_settings, 'utls'))) {
+                $params['fp'] = $fp;
+            }
+            $params['udp'] = 1;
+        }
+        $query = http_build_query($params, '', '&', PHP_QUERY_RFC3986);
         $addr = Helper::wrapIPv6($server['host']);
         $uri = "anytls://{$password}@{$addr}:{$server['port']}?{$query}#{$name}";
         $uri .= "\r\n";

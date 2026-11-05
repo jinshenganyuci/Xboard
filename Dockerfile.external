@@ -11,9 +11,9 @@ ENV ENABLE_EXTERNAL_SUBSCRIPTIONS_SYNC=true
 ENV ENABLE_EXTERNAL_SUBSCRIPTIONS_HEALTH=true
 
 COPY --from=probe_core /usr/local/bin/sing-box /usr/local/bin/sing-box
-# Exercise compiled Reality/uTLS, gRPC and QUIC support, not just version output.
+# Exercise compiled Reality/uTLS, gRPC, QUIC and AnyTLS support, not just version output.
 RUN test -x /usr/bin/timeout && sing-box version | grep -Fx 'sing-box version 1.14.3' \
-    && printf '%s\n' '{"outbounds":[{"type":"vless","tag":"v","server":"192.0.2.1","server_port":443,"uuid":"11111111-2222-4333-8444-555555555555","tls":{"enabled":true,"server_name":"fixture.example","utls":{"enabled":true,"fingerprint":"chrome"},"reality":{"enabled":true,"public_key":"CQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","short_id":"00"}}},{"type":"trojan","tag":"t","server":"192.0.2.1","server_port":443,"password":"synthetic","tls":{"enabled":true},"transport":{"type":"grpc","service_name":"probe"}},{"type":"hysteria2","tag":"h","server":"192.0.2.1","server_port":443,"password":"synthetic","tls":{"enabled":true}}]}' | sing-box check -c stdin
+    && printf '%s\n' '{"outbounds":[{"type":"vless","tag":"v","server":"192.0.2.1","server_port":443,"uuid":"11111111-2222-4333-8444-555555555555","tls":{"enabled":true,"server_name":"fixture.example","utls":{"enabled":true,"fingerprint":"chrome"},"reality":{"enabled":true,"public_key":"CQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","short_id":"00"}}},{"type":"trojan","tag":"t","server":"192.0.2.1","server_port":443,"password":"synthetic","tls":{"enabled":true},"transport":{"type":"grpc","service_name":"probe"}},{"type":"hysteria2","tag":"h","server":"192.0.2.1","server_port":443,"password":"synthetic","tls":{"enabled":true}},{"type":"anytls","tag":"a","server":"192.0.2.1","server_port":443,"password":"synthetic","tls":{"enabled":true}}]}' | sing-box check -c stdin
 
 # Only application code is copied. Existing dependencies, admin assets and
 # container services come from the pinned, tested upstream image.

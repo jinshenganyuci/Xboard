@@ -5,8 +5,8 @@
 ## 仓库与已交付版本
 
 - 仓库为 `jinshenganyuci/Xboard`，当前二开分支为 `feat/third-party-subscriptions`。创建云端任务后先确认分支，不假定默认分支已包含这些改动。
-- 当前交付基线为 `external-v1.0.5`，功能提交为 `86a03f80699a91f970a2a45705c54655aa317f66`。
-- 镜像为 `ghcr.io/jinshenganyuci/xboard:external-v1.0.5`；`latest` 是可变标签，不用于长期标识测试对象。
+- 已发布的历史交付基线为 `external-v1.0.5`，功能提交为 `86a03f80699a91f970a2a45705c54655aa317f66`。本文功能说明更新于 2026-11-05，描述当前分支实现；AnyTLS 和延迟等新增功能是否已发布，需另核对标签与发布任务。
+- 该历史版本镜像为 `ghcr.io/jinshenganyuci/xboard:external-v1.0.5`；`latest` 是可变标签，不用于长期标识测试对象。
 - v1.0.5 多架构索引 digest 为 `sha256:04e21a9edb6ff95bbfcc367a1a318126a0d3b7e551baf3d4dbf5b6cae74688d0`，包含 `linux/amd64` 和 `linux/arm64`。
 - [v1.0.5 发布任务](https://github.com/jinshenganyuci/Xboard/actions/runs/41666121872)通过后才更新 `latest`。以后发布应记录新的提交、标签、digest 和工作流结果，不覆盖旧版本标签。
 
@@ -16,13 +16,15 @@
 | --- | --- |
 | 用户资格 | 已注册、未封禁、已关联套餐且未过期，支持永久套餐；第三方节点忽略本地已用流量，自建节点沿用原规则 |
 | 节点下发 | 管理员按源勾选；只下发启用源中已勾选、仍存在且受支持的节点；所有符合资格的用户使用同一组节点 |
-| 格式与协议 | 输入 URI、Base64 URI、Clash YAML；支持 VLESS、Trojan、Hysteria2，保留认证和传输参数；输出通用 URI、Mihomo/Clash Meta、Sing-box 等现有适配格式 |
+| 格式与协议 | 输入 URI、Base64 URI、Clash YAML；支持 VLESS、Trojan、Hysteria2、AnyTLS，保留认证和传输参数；输出通用 URI、Mihomo/Clash Meta、Sing-box 等已适配格式，客户端须支持相应协议 |
+| VLESS 包编码 | `packetEncoding=none` 按禁用额外包编码处理；通用 URI 保留 `none`，Mihomo / Sing-box 使用对应禁用值，不得静默改成默认 XUDP |
 | 名称 | 保留上游名称，不加 `〔外部〕`；重名仅追加 ` #2` 等序号 |
 | 上游同步 | 独立进程每 60 秒扫描，成功快照满 5 分钟才刷新；通常 5–6 分钟同步一次，不依赖有人访问面板 |
 | 删除与空快照 | 成功同步物理删除消失节点和勾选；有效空订阅清空节点；失败保留旧快照；消失后重新出现默认不勾选 |
 | 节点测活 | 启用源中已勾选且受支持的节点，正常每小时一次，两个 slot 限制最多并发 2；新节点分散首次检测 |
+| 节点延迟 | 复用每小时测活的代理 HTTPS 请求，记录请求耗时；不包含探测进程启动时间，不新增定时任务，也不是用户本机 ping |
 | 状态判断 | 用真实代理凭据请求固定 HTTPS 204 目标；成功在线，首次明确失败待复查，5 分钟后备用复查确认失败才离线；检测异常或超过 2 小时的结果为未知 |
-| 状态展示 | 默认 Xboard 主题蓝色在线、红色离线、灰色待复查/未知，显示最近检测时间；自定义主题需自行适配状态字段 |
+| 状态展示 | 管理页及用户节点 API 返回 `health_status`、`last_check_at`、`latency_ms`；仅在线且结果未过期时返回有效延迟，其余为 `null`。默认 Xboard 主题蓝色在线、红色离线、灰色待复查/未知，显示有效延迟与最近检测时间；自定义主题需自行适配字段 |
 | 下发与测活分离 | 离线不自动取消勾选、不阻止下发；刷新页面和订阅不触发探测；未变化的同步不使测活缓存失效 |
 | 安全边界 | URL 和节点配置由 `APP_KEY` 加密；保留上游拉取与节点探测的公网地址校验、DNS 固定、防重入和日志脱敏；直接访问备用目标只能否决离线，不能据此判在线 |
 
@@ -68,10 +70,11 @@ CACHE_DRIVER=array QUEUE_CONNECTION=sync SESSION_DRIVER=array \
 | 检查 | 入口 | 当前自动执行情况 |
 | --- | --- | --- |
 | PHP 单元与功能回归 | `vendor/bin/phpunit -c phpunit.external.xml` | 手动运行，发布工作流尚未包含 |
-| 默认用户主题状态 | `node tests/browser/external-node-health.cjs` | 手动运行，发布工作流尚未包含 |
+| 默认用户主题状态与延迟 | `node tests/browser/external-node-health.cjs` | 手动运行，发布工作流尚未包含 |
+| 第三方订阅管理页延迟与交互 | `node tests/browser/external-admin-latency.cjs` | 手动运行，发布工作流尚未包含 |
 | 镜像纯净性、全新安装、HTTP 接口 | `.github/scripts/smoke-external-image.php` | 发布工作流创建一次性容器后执行 |
 | 无 Web 服务时自动同步与删除 | `.github/scripts/smoke-external-worker.php` | 发布工作流在隔离网络中执行 |
-| 真实 VLESS、Trojan、Hysteria2 测活 | `.github/scripts/run-health-smoke.sh` | 发布工作流执行，也可验证本地候选镜像 |
+| 真实 VLESS、Trojan、Hysteria2、AnyTLS 测活与延迟 | `.github/scripts/run-health-smoke.sh` | 发布工作流执行，也可验证本地候选镜像 |
 
 截至 v1.0.5，已有通过记录为 PHPUnit 149 个测试 / 1001 个断言、218 项 HTTP 检查、真实三协议测活与默认主题浏览器检查。这是该版本的历史基线，后续增加测试后数量可能变化。发布工作流目前仅由 `external-v*` 标签触发，普通提交和 PR 尚无上述全量自动检查；补 PR CI 是后续开发事项，不是已经完成的功能。
 
@@ -86,7 +89,7 @@ REDIS_HOST=127.0.0.1 REDIS_PORT=6379 \
 
 `phpunit.external.xml` 强制使用相对路径 `.docker/.data/testing.sqlite`、合成加密密钥、Redis DB 14/15 和测试前缀。测试会重建数据库表，Redis 服务仍需隔离；仅使用 `CACHE_DRIVER=array` 不足以替代 Redis，因为测活锁等代码显式使用 Redis。环境如果配置了 `REDIS_URL`、`DATABASE_URL` 或缓存的 Laravel 配置，应先在测试环境中移除这些覆盖，不要把修正写回生产 `.env`。
 
-覆盖解析与协议转换、资格、鉴权、源编辑和选择、上游节点删除、空快照、失败保留、定时刷新、状态转换、并发 slot、修订号竞争、SSRF 限制、凭据脱敏及主题生成。单元测试中的模拟探测成功不代表真实节点联网成功。
+覆盖解析与协议转换（含 AnyTLS 和 VLESS `packetEncoding=none`）、资格、鉴权、源编辑和选择、上游节点删除、空快照、失败保留、定时刷新、状态转换、延迟记录及失效清空、并发 slot、修订号竞争、SSRF 限制、凭据脱敏及主题生成。单元测试中的模拟探测成功不代表真实节点联网成功。
 
 ### 默认用户主题浏览器测试
 
@@ -106,9 +109,21 @@ REDIS_HOST=127.0.0.1 REDIS_PORT=6379 \
 )
 ```
 
-脚本会检查自建节点显示不变、四种第三方状态颜色、检测时间以及悬停、键盘焦点、点击和 Esc 行为。上游默认 bundle 校验失败时应审查兼容性，不应删除 SHA 校验后强行注入。
+脚本会检查自建节点显示不变、四种第三方状态颜色、在线延迟、无效或非在线旧延迟不展示、检测时间，以及悬停、键盘焦点、点击和 Esc 行为。提示文本须明确延迟是面板服务器经节点到检测站点的耗时。上游默认 bundle 校验失败时应审查兼容性，不应删除 SHA 校验后强行注入。
 
-根 `AGENTS.md` 也给出了直接调用 `DefaultThemeHealthAsset::build(getcwd())` 的快捷命令。它会生成 `public/assets/external-subscriptions/xboard-dashboard-health-v1.js`，当前该文件不在 Git 忽略列表中；仅当确认是本次生成的测试产物时清理，不要把它加入提交。上述临时目录方法无需清理源码目录中的文件。
+根 `AGENTS.md` 也给出了直接调用 `DefaultThemeHealthAsset::build(getcwd())` 的快捷命令。它会生成 `public/assets/external-subscriptions/xboard-dashboard-health-v2.js`，当前该文件不在 Git 忽略列表中；仅当确认是本次生成的测试产物时清理，不要把它加入提交。上述临时目录方法无需清理源码目录中的文件。
+
+当前生成入口引用 `node-health-v2.js`，默认主题加载 `node-health-v2.css`。旧 v1 静态资源保留原内容，避免破坏已有强缓存页面；更新显示逻辑时应同步检查入口、脚本和样式版本，不覆盖旧版本 URL 的内容。只有经 SHA 校验的默认主题采用此入口，自定义主题保留原加载方式。
+
+### 管理页浏览器测试
+
+管理页脚本直接读取实际 Blade 模板、JavaScript 和 CSS，用合成管理 API 数据运行，无需 PHP 生成 bundle、真实订阅或管理员凭据。沿用上面的 Playwright / Chromium 配置：
+
+```bash
+node tests/browser/external-admin-latency.cjs
+```
+
+覆盖在线延迟和检测时间、离线/待复查/无有效结果/待检测、未勾选/停用/不支持状态，以及保存勾选后重新读取状态、保留搜索、30 秒缓存刷新、未保存时暂停刷新、移动端表格滚动和节点名称安全显示。刷新和勾选操作不会直接发起探测请求；延迟继续由每小时后台检测更新。
 
 ### 候选镜像与真实协议测试
 
@@ -124,7 +139,7 @@ XBOARD_HEALTH_TEST_IMAGE=xboard-external:candidate \
 
 脚本要求全新 Compose 项目，默认项目名为 `xboard-release-health`。如需指定新名字，设置以 `xboard-release-health` 开头的 `XBOARD_HEALTH_TEST_PROJECT`。已有该项目容器时脚本拒绝复用，不能删掉保护绕过。
 
-测试使用 `internal` 网络、合成代理服务、一次性证书和仅容器内信任的 CA，不挂载生产数据，不访问真实上游节点。`11.254.233.2` 是仅限这个隔离测试网络的地址，不应复制到生产配置。容器硬限制为 1536 MiB，swap 上限同为 1536 MiB。脚本验证正确凭据上线、错误凭据失败复查、恢复上线、目标异常、结果过期及未选节点不检测等行为，并通过退出钩子删除 Compose 容器、网络和临时证书。
+测试使用 `internal` 网络、合成代理服务、一次性证书和仅容器内信任的 CA，不挂载生产数据，不访问真实上游节点。`11.254.233.2` 是仅限这个隔离测试网络的地址，不应复制到生产配置。容器硬限制为 1536 MiB，swap 上限同为 1536 MiB。脚本覆盖 VLESS、Trojan、Hysteria2、AnyTLS，验证正确凭据上线并记录延迟、错误凭据失败复查、恢复上线、目标异常、结果过期时不显示旧延迟及未选节点不检测等行为，并通过退出钩子删除 Compose 容器、网络和临时证书。
 
 HTTP 与自动删除的完整启动步骤在 `.github/workflows/publish-external-image.yml` 内，复用时保持新安装实例、网络隔离和资源限制。三个 `smoke-*.php` 脚本均有破坏性合成数据写入，只能在脚本要求的新一次性实例内设置 `RELEASE_SMOKE_ALLOW_WRITE=1`，不能直接对业务站点执行。
 
@@ -147,6 +162,8 @@ HTTP 与自动删除的完整启动步骤在 `.github/workflows/publish-external
 ## 存储、升级与回退边界
 
 第三方数据在现有应用数据库中的 `external_subscriptions`、`external_subscription_nodes` 两表，测活字段也在节点表内。Redis 承担锁和缓存，不应作为订阅配置的唯一备份。原始 URL 和节点参数依赖原 `APP_KEY` 解密，数据库和 `.env` 必须配套备份和恢复。
+
+`database/migrations/2026_11_05_000001_add_external_node_latency.php` 向节点表新增可空的无符号整数 `health_latency_ms`。新列不改写已有节点或勾选，升级前未记录延迟的在线节点继续显示在线，下一次成功探测后才显示数值。接口对非在线、已过期、未选或停用源的节点返回 `latency_ms: null`，不能把空值当成零延迟。旧版不会读取这一新增列；回退仍须保留该列，并验证旧版对新导入协议的实际支持范围。
 
 生产升级保留原 Compose 挂载、数据库、Redis、主题、插件和 `APP_KEY`，只替换镜像并按[已有站点升级说明](external-subscriptions.md#已有站点使用发布镜像)操作。现有站点不运行 `xboard:install`，不执行数据库 rollback 命令。回退保留新增表和测活字段，使用升级前记录的固定镜像；新迁移、上游基础版本和插件兼容性需要针对实际部署重新验证，不能承诺任何历史镜像都安全回退。
 

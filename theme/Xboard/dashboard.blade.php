@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no" />
   <title>{{$title}}</title>
   @if($theme === 'Xboard' && \App\Support\DefaultThemeHealthAsset::isStockFile(public_path('theme/Xboard/assets/umi.js')))
-    <link rel="stylesheet" href="/assets/external-subscriptions/node-health-v1.css">
+    <link rel="stylesheet" href="/assets/external-subscriptions/node-health-v2.css">
     <script type="module" crossorigin src="{{ \App\Support\DefaultThemeHealthAsset::URL }}"></script>
   @else
     <script type="module" crossorigin src="/theme/{{$theme}}/assets/umi.js"></script>

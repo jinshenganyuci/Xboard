@@ -27,6 +27,7 @@ class HealthService
     {
         return [
             'health_status' => 'unknown', 'health_checked_at' => null, 'health_due_at' => null,
+            'health_latency_ms' => null,
             'health_revision' => DB::raw('health_revision + 1'),
         ];
     }
@@ -67,6 +68,7 @@ class HealthService
                 'health_status' => $state,
                 'is_online' => match ($state) { 'online' => true, 'offline' => false, default => null },
                 'last_check_at' => $at,
+                'latency_ms' => $state === 'online' ? $node->health_latency_ms : null,
             ];
         }
         return $result;
@@ -112,12 +114,12 @@ class HealthService
                 $backup = $node->health_status === 'pending'
                     && (int) $node->health_checked_at > now()->timestamp - self::STALE;
                 try {
-                    $answer = $this->transport->check($node->config, $backup);
+                    $answer = $this->transport->measure($node->config, $backup);
                 } catch (Throwable) {
                     // Never record exception text, endpoints or credentials.
-                    $answer = null;
+                    $answer = new ProbeResult(null);
                 }
-                $state = match ($answer) {
+                $state = match ($answer->online) {
                     true => 'online',
                     false => $backup ? 'offline' : 'pending',
                     null => 'unknown',
@@ -129,6 +131,7 @@ class HealthService
                 // Concurrent edits, deletion or a reclaimed probe invalidate this result.
                 $this->eligible()->whereKey($node->id)->where('health_revision', $revision + 1)->update([
                     'health_status' => $state, 'health_checked_at' => $finished,
+                    'health_latency_ms' => $answer->latencyMs,
                     'health_due_at' => $finished + $delay, 'health_revision' => $revision + 2,
                 ]);
             }

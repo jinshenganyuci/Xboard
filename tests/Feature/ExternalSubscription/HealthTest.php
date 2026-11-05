@@ -8,6 +8,7 @@ use App\Models\ExternalSubscriptionNode;
 use App\Services\ExternalSubscription\Fetcher;
 use App\Services\ExternalSubscription\HealthService;
 use App\Services\ExternalSubscription\Parser;
+use App\Services\ExternalSubscription\ProbeResult;
 use App\Services\ExternalSubscription\ProbeTransport;
 use App\Services\ExternalSubscription\SyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -51,7 +52,10 @@ class HealthTest extends TestCase
     private function service(callable $check): HealthService
     {
         $transport = Mockery::mock(ProbeTransport::class);
-        $transport->shouldReceive('check')->andReturnUsing($check);
+        $transport->shouldReceive('measure')->andReturnUsing(function (...$arguments) use ($check) {
+            $answer = $check(...$arguments);
+            return $answer instanceof ProbeResult ? $answer : new ProbeResult($answer, 120);
+        });
         return new HealthService($transport);
     }
 
@@ -72,31 +76,33 @@ class HealthTest extends TestCase
             $this->assertSame('fixture-password', $config['password']);
             return array_shift($answers);
         });
-        $this->assertSame(['health_status' => 'unknown', 'is_online' => null, 'last_check_at' => null], $health->status($node));
+        $this->assertSame(['health_status' => 'unknown', 'is_online' => null, 'last_check_at' => null, 'latency_ms' => null], $health->status($node));
         $this->assertSame(1, $health->scan(0, 8));
-        $this->assertSame(['health_status' => 'online', 'is_online' => true, 'last_check_at' => now()->timestamp], $health->status($node->fresh()));
+        $this->assertSame(['health_status' => 'online', 'is_online' => true, 'last_check_at' => now()->timestamp, 'latency_ms' => 120], $health->status($node->fresh()));
         $this->travel(3599)->seconds();
         $this->assertSame(0, $health->scan(0, 8));
         $this->travel(1)->seconds();
         $this->assertSame(1, $health->scan(0, 8));
-        $this->assertSame(['health_status' => 'pending', 'is_online' => null, 'last_check_at' => now()->timestamp], $health->status($node->fresh()));
+        $this->assertSame(['health_status' => 'pending', 'is_online' => null, 'last_check_at' => now()->timestamp, 'latency_ms' => null], $health->status($node->fresh()));
+        $this->assertNull($node->fresh()->health_latency_ms);
         $this->travel(299)->seconds();
         $this->assertSame(0, $health->scan(0, 8));
         $this->travel(1)->seconds();
         $this->assertSame(1, $health->scan(1, 8));
-        $this->assertSame(['health_status' => 'offline', 'is_online' => false, 'last_check_at' => now()->timestamp], $health->status($node->fresh()));
+        $this->assertSame(['health_status' => 'offline', 'is_online' => false, 'last_check_at' => now()->timestamp, 'latency_ms' => null], $health->status($node->fresh()));
         $this->travel(3600)->seconds();
         $this->assertSame(1, $health->scan(1, 8));
         $this->assertTrue($health->status($node->fresh())['is_online']);
         $this->assertSame([false, false, true, false], $attempts);
         $checked = now()->timestamp;
         $this->travel(7201)->seconds();
-        $this->assertSame(['health_status' => 'unknown', 'is_online' => null, 'last_check_at' => $checked], $health->status($node->fresh()));
+        $this->assertSame(['health_status' => 'unknown', 'is_online' => null, 'last_check_at' => $checked, 'latency_ms' => null], $health->status($node->fresh()));
     }
 
     public function test_infrastructure_failure_cannot_keep_old_online_or_confirm_offline(): void
     {
-        $node = $this->node($this->source(), attributes: ['health_status' => 'online', 'health_checked_at' => now()->timestamp - 3600]);
+        $node = $this->node($this->source(), attributes: ['health_status' => 'online', 'health_checked_at' => now()->timestamp - 3600,
+            'health_latency_ms' => 99]);
         $attempts = [];
         $health = $this->service(function ($config, $backup) use (&$attempts) {
             $attempts[] = $backup;
@@ -109,6 +115,7 @@ class HealthTest extends TestCase
             $this->assertSame(0, Artisan::call('external-subscriptions:health', ['--slot' => '0', '--limit' => '1']));
             $this->assertStringNotContainsString('private-endpoint-token', Artisan::output());
             $this->assertSame($state, $health->status($node->fresh())['health_status']);
+            $this->assertSame($state === 'online' ? 120 : null, $node->fresh()->health_latency_ms);
             $this->assertSame(now()->timestamp + $delay, $node->fresh()->health_due_at);
             $this->travel($delay - 1)->seconds();
             $this->assertSame(0, $health->scan(1, 1));
@@ -185,6 +192,7 @@ class HealthTest extends TestCase
         $this->assertSame($revision, $node->health_revision);
         $this->assertSame($ciphertext, $node->getRawOriginal('config'));
         $this->assertTrue($healthy->status($node)['is_online']);
+        $this->assertSame(120, $healthy->status($node)['latency_ms']);
 
         $node->update(['health_due_at' => now()->timestamp]);
         $changed = $this->service(function () use ($source) {
@@ -196,7 +204,8 @@ class HealthTest extends TestCase
         $this->assertSame('0e456', $node->config['password']);
         $this->assertTrue($node->selected);
         $this->assertNull($node->health_due_at);
-        $this->assertSame(['health_status' => 'unknown', 'is_online' => null, 'last_check_at' => null], $changed->status($node));
+        $this->assertNull($node->health_latency_ms);
+        $this->assertSame(['health_status' => 'unknown', 'is_online' => null, 'last_check_at' => null, 'latency_ms' => null], $changed->status($node));
 
         $node->update(['health_due_at' => now()->timestamp]);
         $removed = $this->service(function () use ($source) {
@@ -210,13 +219,14 @@ class HealthTest extends TestCase
     public function test_selection_and_source_switches_clear_state_only_for_changed_nodes(): void
     {
         $source = $this->source();
-        $old = $this->node($source, 'A', ['health_status' => 'online', 'health_checked_at' => now()->timestamp]);
+        $old = $this->node($source, 'A', ['health_status' => 'online', 'health_checked_at' => now()->timestamp, 'health_latency_ms' => 145]);
         $other = $this->node($source, 'B', ['selected' => false]);
         $controller = app(ExternalSubscriptionController::class);
         $select = fn ($ids) => $controller->select(Request::create('/', 'POST', ['id' => $source->id, 'node_ids' => $ids]));
         $save = fn ($enabled) => $controller->save(Request::create('/', 'POST', ['id' => $source->id, 'name' => $source->name, 'enabled' => $enabled]));
         $select([$old->id, $other->id]);
         $this->assertSame('online', $old->refresh()->health_status);
+        $this->assertSame(145, $old->health_latency_ms);
         $this->assertSame(0, $old->health_revision);
         $this->assertSame(1, $other->refresh()->health_revision);
         $this->assertNull($other->health_due_at);
@@ -224,10 +234,52 @@ class HealthTest extends TestCase
         $select([$old->id, $other->id]);
         $this->assertSame('unknown', $old->refresh()->health_status);
         $this->assertNull($old->health_checked_at);
+        $this->assertNull($old->health_latency_ms);
         $this->assertSame(2, $old->health_revision);
         $save(false);
         $save(true);
         $this->assertSame(4, $old->refresh()->health_revision);
         $this->assertSame(3, $other->refresh()->health_revision);
+    }
+
+    public function test_each_node_keeps_its_own_measurement_and_ineligible_nodes_hide_cached_latency(): void
+    {
+        $source = $this->source();
+        $online = $this->node($source, 'Measured');
+        $failed = $this->node($source, 'Failed');
+        $health = $this->service(fn ($config) => $config['name'] === 'Measured'
+            ? new ProbeResult(true, 247) : new ProbeResult(false));
+        $this->assertSame(2, $health->scan(0, 2));
+        $this->assertSame(247, $online->refresh()->health_latency_ms);
+        $this->assertNull($failed->refresh()->health_latency_ms);
+
+        foreach (['selected', 'present', 'supported'] as $attribute) {
+            $online->update([$attribute => false]);
+            $this->assertNull($health->status($online)['latency_ms']);
+            $this->assertNull($health->status($online)['last_check_at']);
+            $online->update([$attribute => true]);
+        }
+        $source->update(['enabled' => false]);
+        $this->assertNull($health->status($online)['latency_ms']);
+        $source->update(['enabled' => true]);
+        $this->assertSame(247, $health->status($online)['latency_ms']);
+        $this->travel(7200)->seconds();
+        $this->assertNull($health->status($online)['latency_ms']);
+    }
+
+    public function test_source_disable_during_probe_cannot_restore_old_latency(): void
+    {
+        $source = $this->source();
+        $node = $this->node($source, attributes: ['health_status' => 'online',
+            'health_checked_at' => now()->timestamp - 3600, 'health_latency_ms' => 100]);
+        $health = $this->service(function () use ($source) {
+            app(ExternalSubscriptionController::class)->save(Request::create('/', 'POST', [
+                'id' => $source->id, 'name' => $source->name, 'enabled' => false,
+            ]));
+            return new ProbeResult(true, 321);
+        });
+        $this->assertSame(1, $health->scan(0, 1));
+        $this->assertNull($node->refresh()->health_latency_ms);
+        $this->assertSame('unknown', $health->status($node)['health_status']);
     }
 }

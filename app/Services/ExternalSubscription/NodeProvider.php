@@ -69,6 +69,7 @@ class NodeProvider
                 'health_status' => $status['health_status'] ?? 'unknown',
                 'is_online' => $status['is_online'] ?? null,
                 'last_check_at' => $status['last_check_at'] ?? null,
+                'latency_ms' => $status['latency_ms'] ?? null,
                 'cache_key' => 'external_' . (-$node->id),
                 'external' => true,
             ];

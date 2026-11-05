@@ -11,6 +11,75 @@ class ParserTest extends TestCase
 {
     private const UUID = '11111111-2222-3333-4444-555555555555';
 
+    public function test_eleven_node_subscription_shape_is_fully_recognized(): void
+    {
+        foreach ([SyntheticSubscription::body(), base64_encode(SyntheticSubscription::body())] as $body) {
+            $nodes = (new Parser())->parse($body);
+            $this->assertCount(11, $nodes);
+            $this->assertSame(['vless' => 3, 'trojan' => 3, 'anytls' => 5], array_count_values(array_column($nodes, 'type')));
+            foreach ($nodes as $node) {
+                $this->assertTrue($node['supported'], $node['error'] ?? '');
+                $this->assertNull($node['error']);
+                if ($node['type'] === 'vless') {
+                    $this->assertSame('', $node['config']['protocol_settings']['packet_encoding']);
+                }
+            }
+        }
+    }
+
+    public function test_anytls_uri_default_port_and_tls_options_preserve_special_password(): void
+    {
+        $password = 'a@b:c/#?+ %密碼';
+        $node = (new Parser())->parse('anytls://' . rawurlencode($password)
+            . '@[2001:db8::1]/?sni=tls.example.com&insecure=1&alpn=h2%2Chttp%2F1.1&fp=safari&udp=1#Any%20TLS')[0];
+        $this->assertTrue($node['supported']);
+        $this->assertSame('anytls', $node['type']);
+        $this->assertSame(443, $node['config']['port']);
+        $this->assertSame($password, $node['config']['password']);
+        $this->assertSame('2001:db8::1', $node['config']['host']);
+        $this->assertSame(['server_name' => 'tls.example.com', 'allow_insecure' => true, 'alpn' => ['h2', 'http/1.1']], $node['config']['protocol_settings']['tls']);
+        $this->assertSame(['enabled' => true, 'fingerprint' => 'safari'], $node['config']['protocol_settings']['utls']);
+    }
+
+    public function test_anytls_clash_yaml_retains_tls_and_has_no_invented_alpn(): void
+    {
+        $yaml = "proxies:\n  - name: AnyTLS\n    type: anytls\n    server: example.com\n    port: 443\n    password: 'p@ss:/#?+ %'\n    udp: true\n    sni: tls.example.com\n    skip-cert-verify: false\n    client-fingerprint: safari\n";
+        $node = (new Parser())->parse($yaml)[0];
+        $this->assertTrue($node['supported']);
+        $this->assertSame('p@ss:/#?+ %', $node['config']['password']);
+        $this->assertArrayNotHasKey('alpn', $node['config']['protocol_settings']['tls']);
+        $this->assertFalse($node['config']['protocol_settings']['tls']['allow_insecure']);
+    }
+
+    public function test_anytls_rejects_unrepresentable_settings_without_leaking_credentials(): void
+    {
+        foreach (['security=none', 'security=reality', 'type=ws', 'udp=0', 'udp=invalid',
+            'packetEncoding=xudp', 'packetEncoding=packetaddr', 'flow=xtls-rprx-vision',
+            'pbk=private-parameter', 'insecure=maybe', 'insecure=1&allowInsecure=0'] as $query) {
+            $node = (new Parser())->parse('anytls://never-expose@example.com:443?' . $query . '#AnyTLS')[0];
+            $this->assertFalse($node['supported'], $query);
+            $this->assertSame('anytls', $node['type']);
+            $this->assertSame([], $node['config']);
+            $this->assertStringNotContainsString('never-expose', $node['error']);
+            $this->assertStringNotContainsString('private-parameter', $node['error']);
+        }
+    }
+
+    public function test_vless_packet_encoding_values_are_preserved_and_validated(): void
+    {
+        foreach (['none' => '', '' => '', 'xudp' => 'xudp', 'packetaddr' => 'packetaddr'] as $value => $expected) {
+            $node = (new Parser())->parse('vless://' . self::UUID . '@example.com:443?packetEncoding=' . $value . '#VLESS')[0];
+            $this->assertTrue($node['supported']);
+            $this->assertSame($expected, $node['config']['protocol_settings']['packet_encoding']);
+        }
+        $this->assertFalse((new Parser())->parse('vless://' . self::UUID . '@example.com:443?packetEncoding=unsupported#VLESS')[0]['supported']);
+        $this->assertFalse((new Parser())->parse('trojan://password@example.com:443?packetEncoding=xudp#Trojan')[0]['supported']);
+        $yaml = "proxies:\n  - name: VLESS\n    type: vless\n    server: example.com\n    port: 443\n    uuid: " . self::UUID . "\n    packet-encoding: ''\n";
+        $node = (new Parser())->parse($yaml)[0];
+        $this->assertTrue($node['supported']);
+        $this->assertSame('', $node['config']['protocol_settings']['packet_encoding']);
+    }
+
     public function test_base64_ipv6_vless_preserves_uuid_reality_and_encoded_name(): void
     {
         $uri = 'vless://' . self::UUID . '@[2606:4700:4700::1111]:443?security=reality&type=tcp&sni=edge.example.com&pbk=' . str_repeat('a', 43) . '&sid=aabb&fp=chrome&flow=xtls-rprx-vision#HK%20%2B%20%E9%A6%99%E6%B8%AF';

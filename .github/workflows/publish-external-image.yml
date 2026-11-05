@@ -140,7 +140,7 @@ jobs:
           docker cp .github/scripts/smoke-external-worker.php xboard-worker-smoke:/tmp/release-worker-smoke.php
           docker exec -e RELEASE_SMOKE_ALLOW_WRITE=1 xboard-worker-smoke php /tmp/release-worker-smoke.php
 
-      - name: Check hourly health through real VLESS, Trojan and Hysteria2 proxies
+      - name: Check hourly health and latency through real VLESS, Trojan, Hysteria2 and AnyTLS proxies
         env:
           IMAGE_NAME: ghcr.io/${{ github.repository }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}

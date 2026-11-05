@@ -30,7 +30,7 @@ context.load_cert_chain(root / 'server.crt', root / 'server.key')
 server.socket = context.wrap_socket(server.socket, server_side=True)
 tls = {'enabled': True, 'certificate_path': str(root / 'server.crt'), 'key_path': str(root / 'server.key')}
 inbounds = []
-for protocol, port in [('vless', 19001), ('trojan', 19002), ('hysteria2', 19003)]:
+for protocol, port in [('vless', 19001), ('trojan', 19002), ('hysteria2', 19003), ('anytls', 19004)]:
     user = {'uuid': '75fc28e4-e2fa-4584-9685-f8f1651a6336'} if protocol == 'vless' else {'password': 'health-fixture-secret'}
     inbounds.append({'type': protocol, 'tag': protocol, 'listen': ip, 'listen_port': port, 'users': [user], 'tls': tls})
 config = {'log': {'disabled': True}, 'inbounds': inbounds,

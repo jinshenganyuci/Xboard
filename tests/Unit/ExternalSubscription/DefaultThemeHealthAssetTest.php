@@ -22,6 +22,8 @@ class DefaultThemeHealthAssetTest extends TestCase
             DefaultThemeHealthAsset::build($root);
             $compiled = hash_file('sha256', $target);
             $this->assertNotSame($original, $compiled);
+            $this->assertStringContainsString('from "/assets/external-subscriptions/node-health-v2.js"', file_get_contents($target));
+            $this->assertFileExists($root . '/public/assets/external-subscriptions/xboard-dashboard-health-v2.js');
             DefaultThemeHealthAsset::build($root);
             $this->assertSame($compiled, hash_file('sha256', $target));
             $this->assertSame($original, hash_file('sha256', $source));

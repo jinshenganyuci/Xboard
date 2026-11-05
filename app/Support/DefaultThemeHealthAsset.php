@@ -7,7 +7,7 @@ use RuntimeException;
 /** The upstream theme ships a compiled Vue bundle only. Never modify it in place. */
 final class DefaultThemeHealthAsset
 {
-    public const URL = '/assets/external-subscriptions/xboard-dashboard-health-v1.js';
+    public const URL = '/assets/external-subscriptions/xboard-dashboard-health-v2.js';
 
     private const STOCK_SHA256 = '69ff1e68dd44b84f803e631367b6fc9dfd52e79d049067fa52cfa859031f20dc';
     private const DOT = 'Ir("div",{class:J(["h-1.5 w-1.5 rounded-full",e.is_online?"bg-blue-500":"bg-red-500"])},null,2)';
@@ -25,7 +25,7 @@ final class DefaultThemeHealthAsset
             throw new RuntimeException('Unsupported stock Xboard dashboard bundle; review the health renderer before building.');
         }
 
-        $imports = 'import {renderExternalHealth as xbRenderHealth, healthLegend as xbHealthLegend} from "/assets/external-subscriptions/node-health-v1.js";';
+        $imports = 'import {renderExternalHealth as xbRenderHealth, healthLegend as xbHealthLegend} from "/assets/external-subscriptions/node-health-v2.js";';
         return $imports . "\n" . str_replace(
             [self::DOT, self::LEGEND],
             ['(e.external?xbRenderHealth(Ir,e):' . self::DOT . ')', 'oe(t.value.some(n=>n.external)?xbHealthLegend():e.$t("五分钟内节点在线情况"))'],

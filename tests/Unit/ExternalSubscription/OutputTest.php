@@ -8,6 +8,7 @@ use App\Protocols\General;
 use App\Protocols\Shadowrocket;
 use App\Protocols\SingBox;
 use App\Protocols\Surge;
+use App\Services\ExternalSubscription\Parser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Symfony\Component\Yaml\Yaml;
 use Tests\TestCase;
@@ -39,6 +40,151 @@ class OutputTest extends TestCase
                 'protocol_settings' => ['version' => 2, 'tls' => ['server_name' => 'hy2-tls.example.com', 'allow_insecure' => false, 'alpn' => ['h3']],
                     'obfs' => ['open' => true, 'type' => 'salamander', 'password' => 'obfs-password']]],
         ];
+    }
+
+    private function anytlsNode(bool $withAlpn = true): array
+    {
+        $node = (new Parser())->parse('anytls://p%40ss%3A%2F%23%3F%2B%20%25@[2001:db8::1]:443?sni=tls.example.com&insecure=1&fp=safari'
+            . ($withAlpn ? '&alpn=h2%2Chttp%2F1.1' : '') . '#AnyTLS%20%23%20%2F%20test')[0];
+        $this->assertTrue($node['supported']);
+        return $node['config'];
+    }
+
+    public function test_anytls_uri_outputs_round_trip_credentials_and_tls_options(): void
+    {
+        $node = $this->anytlsNode();
+        foreach ([General::class, Shadowrocket::class] as $class) {
+            $body = base64_decode((new $class($this->user(), [$node]))->handle()->getContent());
+            $line = collect(explode("\n", $body))->first(fn ($line) => str_starts_with($line, 'anytls://'));
+            $this->assertNotNull($line);
+            $parts = parse_url(trim($line));
+            $this->assertSame($node['password'], rawurldecode($parts['user']));
+            $this->assertSame($node['name'], rawurldecode($parts['fragment']));
+            $this->assertSame('[2001:db8::1]', $parts['host']);
+            parse_str($parts['query'], $params);
+            $this->assertSame('h2,http/1.1', $params['alpn']);
+            $this->assertSame('tls.example.com', $params['sni']);
+            $this->assertSame('1', $params['insecure']);
+            $this->assertSame('safari', $params['fp']);
+            $this->assertSame('1', $params['udp']);
+            $roundTrip = (new Parser())->parse(trim($line))[0];
+            $this->assertTrue($roundTrip['supported']);
+            $this->assertSame($node, $roundTrip['config']);
+            $this->assertStringNotContainsString($this->user()['uuid'], $body);
+        }
+    }
+
+    public function test_anytls_yaml_json_and_probe_outbound_preserve_tls_without_forced_alpn(): void
+    {
+        foreach ([true, false] as $withAlpn) {
+            $node = $this->anytlsNode($withAlpn);
+            $yaml = (new ClashMeta($this->user(), [$node]))->handle()->getContent();
+            $clash = collect(Yaml::parse($yaml)['proxies'])->firstWhere('name', $node['name']);
+            $singBox = new SingBox($this->user(), [$node], 'sing-box', '1.12.0');
+            $sing = collect(json_decode($singBox->handle()->getContent(), true)['outbounds'])->firstWhere('tag', $node['name']);
+            $this->assertSame($node['password'], $clash['password']);
+            $this->assertSame($node['password'], $sing['password']);
+            $this->assertSame($sing, $singBox->externalOutbound($node));
+            $this->assertSame('anytls', $sing['type']);
+            $this->assertTrue($sing['tls']['enabled']);
+            $this->assertTrue($sing['tls']['insecure']);
+            $this->assertTrue($clash['skip-cert-verify']);
+            $this->assertSame('tls.example.com', $sing['tls']['server_name']);
+            $this->assertSame('tls.example.com', $clash['sni']);
+            $this->assertSame('safari', $clash['client-fingerprint']);
+            $this->assertSame(['enabled' => true, 'fingerprint' => 'safari'], $sing['tls']['utls']);
+            if ($withAlpn) {
+                $this->assertSame(['h2', 'http/1.1'], $clash['alpn']);
+                $this->assertSame(['h2', 'http/1.1'], $sing['tls']['alpn']);
+            } else {
+                $this->assertArrayNotHasKey('alpn', $clash);
+                $this->assertArrayNotHasKey('alpn', $sing['tls']);
+            }
+            $roundTrip = (new Parser())->parse(Yaml::dump(['proxies' => [$clash]], 8))[0];
+            $this->assertTrue($roundTrip['supported']);
+            $this->assertSame($node, $roundTrip['config']);
+        }
+    }
+
+    public function test_vless_explicit_packet_encoding_survives_every_exporter(): void
+    {
+        foreach (['none' => '', 'xudp' => 'xudp', 'packetaddr' => 'packetaddr'] as $input => $normalized) {
+            $node = (new Parser())->parse('vless://11111111-2222-4333-8444-555555555555@example.com:443?security=reality&pbk='
+                . str_repeat('a', 43) . '&sni=tls.example.com&flow=xtls-rprx-vision&packetEncoding=' . $input . '#VLESS')[0]['config'];
+            foreach ([General::class, Shadowrocket::class] as $class) {
+                $body = base64_decode((new $class($this->user(), [$node]))->handle()->getContent());
+                $line = collect(explode("\n", $body))->first(fn ($line) => str_starts_with($line, 'vless://'));
+                parse_str(parse_url(trim($line), PHP_URL_QUERY), $params);
+                $this->assertSame($input, $params['packetEncoding']);
+                $this->assertSame('xtls-rprx-vision', $params['flow']);
+                $this->assertSame('reality', $params['security']);
+                $this->assertArrayNotHasKey('mode', $params);
+                $this->assertArrayNotHasKey('spx', $params);
+                $this->assertTrue((new Parser())->parse(trim($line))[0]['supported']);
+            }
+            $clash = ClashMeta::buildVless($node['password'], $node);
+            $this->assertSame($normalized, $clash['packet-encoding']);
+            $sing = (new SingBox($this->user(), []))->externalOutbound($node);
+            $this->assertSame($normalized, $sing['packet_encoding']);
+        }
+    }
+
+    public function test_eleven_node_shape_is_fully_delivered_by_supported_formats(): void
+    {
+        $nodes = array_column((new Parser())->parse(SyntheticSubscription::body()), 'config');
+        foreach ([General::class, Shadowrocket::class] as $class) {
+            $body = base64_decode((new $class($this->user(), $nodes))->handle()->getContent());
+            $lines = array_values(array_filter(explode("\n", trim($body)), fn ($line) => str_contains($line, '://')));
+            $this->assertCount(11, $lines);
+            $parsed = (new Parser())->parse(implode("\n", $lines));
+            $this->assertSame($nodes, array_column($parsed, 'config'));
+        }
+        $clash = collect(Yaml::parse((new ClashMeta($this->user(), $nodes))->handle()->getContent())['proxies'])->keyBy('name');
+        $sing = collect(json_decode((new SingBox($this->user(), $nodes, 'sing-box', '1.12.0'))->handle()->getContent(), true)['outbounds'])->keyBy('tag');
+        foreach ($nodes as $node) {
+            $field = $node['type'] === 'vless' ? 'uuid' : 'password';
+            $this->assertSame($node['password'], $clash[$node['name']][$field]);
+            $this->assertSame($node['password'], $sing[$node['name']][$field]);
+            $this->assertSame($node['type'], $sing[$node['name']]['type']);
+            if ($node['type'] === 'vless') {
+                $this->assertSame('', $sing[$node['name']]['packet_encoding']);
+                $this->assertSame('', $clash[$node['name']]['packet-encoding']);
+            }
+        }
+    }
+
+    public function test_anytls_version_filter_and_native_output_behavior_are_preserved(): void
+    {
+        $node = $this->anytlsNode(false);
+        foreach (['1.11.0' => false, '1.12.0' => true] as $version => $included) {
+            $config = json_decode((new SingBox($this->user(), [$node], 'sing-box', $version))->handle()->getContent(), true);
+            $this->assertSame($included, collect($config['outbounds'])->contains('tag', $node['name']));
+        }
+        foreach (['2591' => false, '2592' => true, '2.2.64' => false, '2.2.65' => true, '2.2.66' => true] as $version => $included) {
+            $body = base64_decode((new Shadowrocket($this->user(), [$node], 'shadowrocket', (string) $version))->handle()->getContent());
+            $this->assertSame($included, str_contains($body, 'anytls://'));
+        }
+        $native = array_replace($node, ['external' => false, 'password' => 'native-password']);
+        $config = json_decode((new SingBox($this->user(), [$native]))->handle()->getContent(), true);
+        $outbound = collect($config['outbounds'])->firstWhere('tag', $node['name']);
+        $this->assertSame(['h3'], $outbound['tls']['alpn']);
+        $this->assertNull((new SingBox($this->user(), []))->externalOutbound($native));
+        $this->assertStringNotContainsString('udp=', General::buildAnyTLS($native['password'], $native));
+    }
+
+    public function test_anytls_mihomo_core_version_filter_does_not_guess_wrapper_versions(): void
+    {
+        $node = $this->anytlsNode(false);
+        foreach ([['mihomo', '1.19.2', false], ['meta', '1.19.2', false],
+            ['mihomo', '1.19.3', true], ['meta', '1.19.3', true],
+            ['verge', '2.2.0', true], ['flclash', '0.8.0', true],
+            ['mihomo', null, true], [null, null, true]] as [$client, $version, $included]) {
+            $config = Yaml::parse((new ClashMeta($this->user(), [$node], $client, $version))->handle()->getContent());
+            $this->assertSame($included, collect($config['proxies'] ?? [])->contains('name', $node['name']));
+        }
+        $native = array_replace($node, ['external' => false]);
+        $config = Yaml::parse((new ClashMeta($this->user(), [$native], 'mihomo', '1.19.2'))->handle()->getContent());
+        $this->assertTrue(collect($config['proxies'])->contains('name', $native['name']));
     }
 
     public function test_general_and_shadowrocket_keep_credentials_encoded_names_and_tls_parameters(): void

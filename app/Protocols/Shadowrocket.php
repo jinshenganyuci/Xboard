@@ -29,6 +29,21 @@ class Shadowrocket extends AbstractProtocol
         ],
     ];
 
+    protected function isCompatible($server)
+    {
+        if (!empty($server['external']) && $server['type'] === Server::TYPE_ANYTLS
+            && $this->clientName === 'shadowrocket' && !empty($this->clientVersion)) {
+            // Shadowrocket identifies itself with either a build number or an
+            // application version. They are separate version scales.
+            $version = (string) $this->clientVersion;
+            $minimum = ctype_digit($version) ? '2592' : '2.2.65';
+            if (version_compare($version, $minimum, '<')) {
+                return false;
+            }
+        }
+        return parent::isCompatible($server);
+    }
+
     public function handle()
     {
         $servers = $this->servers;
@@ -175,6 +190,11 @@ class Shadowrocket extends AbstractProtocol
     public static function buildVless($uuid, $server)
     {
         $protocol_settings = $server['protocol_settings'];
+        if (!empty($server['external']) && array_key_exists('packet_encoding', $protocol_settings)) {
+            // The standard VLESS URI carries packetEncoding explicitly; the
+            // legacy base64 Shadowrocket form has no equivalent field here.
+            return General::buildVless($uuid, $server);
+        }
         $userinfo = base64_encode('auto:' . $uuid . '@' . Helper::wrapIPv6($server['host']) . ':' . $server['port']);
         $config = [
             'tfo' => 1,
@@ -289,6 +309,9 @@ class Shadowrocket extends AbstractProtocol
 
     public static function buildTrojan($password, $server)
     {
+        if (!empty($server['external'])) {
+            return General::buildTrojan($password, $server);
+        }
         $protocol_settings = $server['protocol_settings'];
         $name = rawurlencode($server['name']);
         $params = [];
@@ -456,6 +479,9 @@ class Shadowrocket extends AbstractProtocol
 
     public static function buildAnyTLS($password, $server)
     {
+        if (!empty($server['external'])) {
+            return General::buildAnyTLS($password, $server);
+        }
         $protocol_settings = $server['protocol_settings'];
         $name = rawurlencode($server['name']);
         $params = [
