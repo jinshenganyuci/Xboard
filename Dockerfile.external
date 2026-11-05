@@ -1,0 +1,42 @@
+# Official SagerNet v1.14.3 multi-architecture release (linux/amd64 and linux/arm64).
+FROM ghcr.io/sagernet/sing-box@sha256:80c639ba467885b28511fb7c980565c2d30a8752f778e7bc8abdbc91fbfd95ec AS probe_core
+
+# Keep the exact upstream runtime used in the upgrade/rollback verification.
+# This digest contains both linux/amd64 and linux/arm64 images.
+FROM ghcr.io/cedar2025/xboard@sha256:896e4926e0d7f18d223d58770590c74ab6f05ecb21f1b74ef5357ed20f44c676
+
+WORKDIR /www
+
+ENV ENABLE_EXTERNAL_SUBSCRIPTIONS_SYNC=true
+ENV ENABLE_EXTERNAL_SUBSCRIPTIONS_HEALTH=true
+
+COPY --from=probe_core /usr/local/bin/sing-box /usr/local/bin/sing-box
+# Exercise compiled Reality/uTLS, gRPC, QUIC and AnyTLS support, not just version output.
+RUN test -x /usr/bin/timeout && sing-box version | grep -Fx 'sing-box version 1.14.3' \
+    && printf '%s\n' '{"outbounds":[{"type":"vless","tag":"v","server":"192.0.2.1","server_port":443,"uuid":"11111111-2222-4333-8444-555555555555","tls":{"enabled":true,"server_name":"fixture.example","utls":{"enabled":true,"fingerprint":"chrome"},"reality":{"enabled":true,"public_key":"CQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","short_id":"00"}}},{"type":"trojan","tag":"t","server":"192.0.2.1","server_port":443,"password":"synthetic","tls":{"enabled":true},"transport":{"type":"grpc","service_name":"probe"}},{"type":"hysteria2","tag":"h","server":"192.0.2.1","server_port":443,"password":"synthetic","tls":{"enabled":true}},{"type":"anytls","tag":"a","server":"192.0.2.1","server_port":443,"password":"synthetic","tls":{"enabled":true}}]}' | sing-box check -c stdin
+
+# Only application code is copied. Existing dependencies, admin assets and
+# container services come from the pinned, tested upstream image.
+COPY --chown=www:www app/ /www/app/
+COPY --chown=www:www database/migrations/ /www/database/migrations/
+COPY --chown=www:www resources/views/ /www/resources/views/
+COPY --chown=www:www routes/ /www/routes/
+COPY --chown=www:www public/assets/external-subscriptions/ /www/public/assets/external-subscriptions/
+COPY --chown=www:www theme/Xboard/dashboard.blade.php /www/theme/Xboard/dashboard.blade.php
+RUN php -r 'require "/www/app/Support/DefaultThemeHealthAsset.php"; App\Support\DefaultThemeHealthAsset::build("/www");'
+COPY --chown=www:www .docker/external-subscriptions/worker.sh /usr/local/bin/xboard-external-subscriptions-worker
+COPY .docker/external-subscriptions/supervisor.conf /tmp/xboard-external-subscriptions-supervisor.conf
+
+# Preserve upstream services and add only the independent subscription refresher.
+RUN chmod 755 /usr/local/bin/xboard-external-subscriptions-worker \
+    && cat /tmp/xboard-external-subscriptions-supervisor.conf >> /etc/supervisor/conf.d/supervisord.conf \
+    && rm /tmp/xboard-external-subscriptions-supervisor.conf
+
+# Preserve the tested vendor autoloader as well as its installed packages.
+# New App classes use PSR-4 fallback; do not rebuild vendor from stale metadata.
+RUN rm -f bootstrap/cache/*.php \
+    && rm -f storage/framework/views/*.php \
+    && rm -rf /.data \
+    && php -r '$loader = require "vendor/autoload.php"; if ($loader->isClassMapAuthoritative() || !class_exists(App\Services\ExternalSubscription\NodeProvider::class) || !class_exists(Laravel\Reverb\ReverbServiceProvider::class)) { throw new RuntimeException("Runtime autoloader compatibility failed"); }' \
+    && CACHE_DRIVER=array QUEUE_CONNECTION=sync SESSION_DRIVER=array php artisan list --raw > /dev/null \
+    && chown -R www:www bootstrap/cache

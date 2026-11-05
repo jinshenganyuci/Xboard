@@ -25,12 +25,18 @@ class RequestLog
 
             $action = $this->resolveAction($request->path());
             $data = collect($request->all())->except(self::SENSITIVE_KEYS)->toArray();
+            // Subscription URLs contain upstream bearer credentials. Keep only
+            // non-secret management metadata in the audit trail.
+            $isExternalSubscription = str_contains($request->path(), '/external-subscription/');
+            if ($isExternalSubscription) {
+                $data = \Illuminate\Support\Arr::only($data, ['id', 'name', 'enabled', 'node_ids']);
+            }
 
             AdminAuditLog::insert([
                 'admin_id' => $admin->id,
                 'action' => $action,
                 'method' => $request->method(),
-                'uri' => $request->getRequestUri(),
+                'uri' => $isExternalSubscription ? '/' . $request->path() : $request->getRequestUri(),
                 'request_data' => json_encode($data, JSON_UNESCAPED_UNICODE),
                 'ip' => $request->getClientIp(),
                 'created_at' => time(),

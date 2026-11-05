@@ -29,6 +29,21 @@ class Shadowrocket extends AbstractProtocol
         ],
     ];
 
+    protected function isCompatible($server)
+    {
+        if (!empty($server['external']) && $server['type'] === Server::TYPE_ANYTLS
+            && $this->clientName === 'shadowrocket' && !empty($this->clientVersion)) {
+            // Shadowrocket identifies itself with either a build number or an
+            // application version. They are separate version scales.
+            $version = (string) $this->clientVersion;
+            $minimum = ctype_digit($version) ? '2592' : '2.2.65';
+            if (version_compare($version, $minimum, '<')) {
+                return false;
+            }
+        }
+        return parent::isCompatible($server);
+    }
+
     public function handle()
     {
         $servers = $this->servers;
@@ -40,7 +55,9 @@ class Shadowrocket extends AbstractProtocol
         $download = round($user['d'] / (1024 * 1024 * 1024), 2);
         $totalTraffic = round($user['transfer_enable'] / (1024 * 1024 * 1024), 2);
         $expiredDate = $user['expired_at'] === null ? 'N/A' : date('Y-m-d', $user['expired_at']);
-        $uri .= "STATUS=🚀↑:{$upload}GB,↓:{$download}GB,TOT:{$totalTraffic}GB💡Expires:{$expiredDate}\r\n";
+        $uri .= $this->externalOnly
+            ? "STATUS=Expires:{$expiredDate}\r\n"
+            : "STATUS=🚀↑:{$upload}GB,↓:{$download}GB,TOT:{$totalTraffic}GB💡Expires:{$expiredDate}\r\n";
         foreach ($servers as $item) {
             if ($item['type'] === Server::TYPE_SHADOWSOCKS) {
                 $uri .= self::buildShadowsocks($item['password'], $item);
@@ -173,6 +190,11 @@ class Shadowrocket extends AbstractProtocol
     public static function buildVless($uuid, $server)
     {
         $protocol_settings = $server['protocol_settings'];
+        if (!empty($server['external']) && array_key_exists('packet_encoding', $protocol_settings)) {
+            // The standard VLESS URI carries packetEncoding explicitly; the
+            // legacy base64 Shadowrocket form has no equivalent field here.
+            return General::buildVless($uuid, $server);
+        }
         $userinfo = base64_encode('auto:' . $uuid . '@' . Helper::wrapIPv6($server['host']) . ':' . $server['port']);
         $config = [
             'tfo' => 1,
@@ -276,6 +298,9 @@ class Shadowrocket extends AbstractProtocol
                 break;
         }
 
+        if ($alpn = data_get($protocol_settings, 'tls_settings.alpn')) {
+            $config['alpn'] = implode(',', (array) $alpn);
+        }
         $query = http_build_query($config, '', '&', PHP_QUERY_RFC3986);
         $uri = "vless" . "://{$userinfo}?{$query}";
         $uri .= "\r\n";
@@ -284,6 +309,9 @@ class Shadowrocket extends AbstractProtocol
 
     public static function buildTrojan($password, $server)
     {
+        if (!empty($server['external'])) {
+            return General::buildTrojan($password, $server);
+        }
         $protocol_settings = $server['protocol_settings'];
         $name = rawurlencode($server['name']);
         $params = [];
@@ -338,7 +366,14 @@ class Shadowrocket extends AbstractProtocol
                     $params['mode'] = $mode;
                 break;
         }
-        $query = http_build_query($params);
+        if ($alpn = data_get($protocol_settings, 'tls_settings.alpn')) {
+            $params['alpn'] = implode(',', (array) $alpn);
+        }
+        if ($fp = Helper::getTlsFingerprint(data_get($protocol_settings, 'utls'))) {
+            $params['fp'] = $fp;
+        }
+        $query = http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+        $password = rawurlencode($password);
         $addr = Helper::wrapIPv6($server['host']);
 
         $uri = "trojan://{$password}@{$addr}:{$server['port']}?{$query}&tfo=1#{$name}";
@@ -349,6 +384,7 @@ class Shadowrocket extends AbstractProtocol
     public static function buildHysteria($password, $server)
     {
         $protocol_settings = $server['protocol_settings'];
+        $name = rawurlencode($server['name']);
         $uri = ''; // 初始化变量
 
         switch (data_get($protocol_settings, 'version')) {
@@ -370,10 +406,13 @@ class Shadowrocket extends AbstractProtocol
                 $params['insecure'] = data_get($protocol_settings, 'tls.allow_insecure');
                 if (isset($server['ports']))
                     $params['mport'] = $server['ports'];
-                $query = http_build_query($params);
+                if ($alpn = data_get($protocol_settings, 'tls.alpn')) {
+                    $params['alpn'] = implode(',', (array) $alpn);
+                }
+                $query = http_build_query($params, '', '&', PHP_QUERY_RFC3986);
                 $addr = Helper::wrapIPv6($server['host']);
 
-                $uri = "hysteria://{$addr}:{$server['port']}?{$query}#{$server['name']}";
+                $uri = "hysteria://{$addr}:{$server['port']}?{$query}#{$name}";
                 $uri .= "\r\n";
                 break;
             case 2:
@@ -396,15 +435,20 @@ class Shadowrocket extends AbstractProtocol
                 }
                 $params['insecure'] = data_get($protocol_settings, 'tls.allow_insecure');
                 if (isset($protocol_settings['hop_interval'])) {
-                    $params['keepalive'] = data_get($protocol_settings, 'hop_interval');
+                    $key = !empty($server['external']) ? 'hop-interval' : 'keepalive';
+                    $params[$key] = data_get($protocol_settings, 'hop_interval');
                 }
                 if (isset($server['ports'])) {
                     $params['mport'] = $server['ports'];
                 }
-                $query = http_build_query($params);
+                if ($alpn = data_get($protocol_settings, 'tls.alpn')) {
+                    $params['alpn'] = implode(',', (array) $alpn);
+                }
+                $query = http_build_query($params, '', '&', PHP_QUERY_RFC3986);
                 $addr = Helper::wrapIPv6($server['host']);
 
-                $uri = "hysteria2://{$password}@{$addr}:{$server['port']}?{$query}#{$server['name']}";
+                $password = rawurlencode($password);
+                $uri = "hysteria2://{$password}@{$addr}:{$server['port']}?{$query}#{$name}";
                 $uri .= "\r\n";
                 break;
         }
@@ -435,6 +479,9 @@ class Shadowrocket extends AbstractProtocol
 
     public static function buildAnyTLS($password, $server)
     {
+        if (!empty($server['external'])) {
+            return General::buildAnyTLS($password, $server);
+        }
         $protocol_settings = $server['protocol_settings'];
         $name = rawurlencode($server['name']);
         $params = [
