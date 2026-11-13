@@ -22,8 +22,10 @@ COPY --chown=www:www database/migrations/ /www/database/migrations/
 COPY --chown=www:www resources/views/ /www/resources/views/
 COPY --chown=www:www routes/ /www/routes/
 COPY --chown=www:www public/assets/external-subscriptions/ /www/public/assets/external-subscriptions/
+COPY --chown=www:www public/assets/node-dns/ /www/public/assets/node-dns/
 COPY --chown=www:www theme/Xboard/dashboard.blade.php /www/theme/Xboard/dashboard.blade.php
 RUN php -r 'require "/www/app/Support/DefaultThemeHealthAsset.php"; App\Support\DefaultThemeHealthAsset::build("/www");'
+RUN php -r 'require "/www/app/Support/AdminDnsAsset.php"; App\Support\AdminDnsAsset::build("/www");'
 COPY --chown=www:www .docker/external-subscriptions/worker.sh /usr/local/bin/xboard-external-subscriptions-worker
 COPY .docker/external-subscriptions/supervisor.conf /tmp/xboard-external-subscriptions-supervisor.conf
 

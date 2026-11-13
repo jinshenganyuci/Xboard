@@ -382,7 +382,7 @@ class ServerService
         }
 
         if (!empty($node['cert_config'])) {
-            $certConfig = $node['cert_config'];
+            $certConfig = app(GlobalDnsService::class)->resolveNode($node['cert_config']);
             // Normalize: accept both "mode" and "cert_mode" from the database
             if (isset($certConfig['mode']) && !isset($certConfig['cert_mode'])) {
                 $certConfig['cert_mode'] = $certConfig['mode'];

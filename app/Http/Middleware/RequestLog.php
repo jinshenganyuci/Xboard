@@ -28,22 +28,30 @@ class RequestLog
             // Subscription URLs contain upstream bearer credentials. Keep only
             // non-secret management metadata in the audit trail.
             $isExternalSubscription = str_contains($request->path(), '/external-subscription/');
+            $isDnsSetting = str_contains($request->path(), '/dns-settings/');
+            $isNodeManagement = str_contains($request->path(), '/server/manage/');
             if ($isExternalSubscription) {
                 $data = \Illuminate\Support\Arr::only($data, ['id', 'name', 'enabled', 'node_ids']);
+            } elseif ($isDnsSetting) {
+                $data = \Illuminate\Support\Arr::only($data, ['dns_provider', 'email', 'revision']);
+            } elseif ($isNodeManagement) {
+                // Node protocol/certificate settings can include DNS credentials,
+                // private keys and outbounds. Audit management metadata only.
+                $data = \Illuminate\Support\Arr::only($data, ['id', 'ids', 'name', 'type', 'show', 'enabled', 'machine_id']);
             }
 
             AdminAuditLog::insert([
                 'admin_id' => $admin->id,
                 'action' => $action,
                 'method' => $request->method(),
-                'uri' => $isExternalSubscription ? '/' . $request->path() : $request->getRequestUri(),
+                'uri' => ($isExternalSubscription || $isDnsSetting || $isNodeManagement) ? '/' . $request->path() : $request->getRequestUri(),
                 'request_data' => json_encode($data, JSON_UNESCAPED_UNICODE),
                 'ip' => $request->getClientIp(),
                 'created_at' => time(),
                 'updated_at' => time(),
             ]);
         } catch (\Throwable $e) {
-            \Log::warning('Audit log write failed: ' . $e->getMessage());
+            \Log::warning('Audit log write failed.');
         }
 
         return $response;

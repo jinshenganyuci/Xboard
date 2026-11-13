@@ -133,7 +133,14 @@ class ServerSave extends FormRequest
             'rate_time_ranges' => 'nullable|array',
             'custom_outbounds' => 'nullable|array',
             'custom_routes' => 'nullable|array',
-            'cert_config' => 'nullable|array',
+            // A nested validation rule would make validated() discard the other
+            // legacy certificate fields. Validate the marker without narrowing this array.
+            'cert_config' => ['nullable', 'array', function ($attribute, $value, $fail) {
+                if (is_array($value) && array_key_exists('use_global_dns', $value)
+                    && !in_array($value['use_global_dns'], [true, false, 0, 1, '0', '1'], true)) {
+                    $fail('全局 DNS 配置开关必须为布尔值。');
+                }
+            }],
             'rate_time_ranges.*.start' => 'required_with:rate_time_ranges|string|date_format:H:i',
             'rate_time_ranges.*.end' => 'required_with:rate_time_ranges|string|date_format:H:i',
             'rate_time_ranges.*.rate' => 'required_with:rate_time_ranges|numeric|min:0',

@@ -4,6 +4,8 @@
     <testsuite name="External subscriptions">
       <directory>tests/Unit/ExternalSubscription</directory>
       <directory>tests/Feature/ExternalSubscription</directory>
+      <directory>tests/Unit/NodeDns</directory>
+      <directory>tests/Feature/NodeDns</directory>
     </testsuite>
   </testsuites>
   <php>
