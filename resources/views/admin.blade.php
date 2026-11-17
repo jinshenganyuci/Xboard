@@ -80,6 +80,9 @@
 </head>
 
 <body>
+  <nav aria-label="扩展管理" style="position:relative;z-index:1;display:flex;justify-content:flex-end;align-items:center;min-height:36px;padding:4px 20px;background:#ecfdf5;border-bottom:1px solid #d1fae5;font:13px/1.5 system-ui,sans-serif;box-sizing:border-box;">
+    <a href="/{{ $secure_path }}/external-subscriptions" style="color:#065f46;text-decoration:none;font-weight:600;">第三方订阅管理 ↗</a>
+  </nav>
   <div id="root"></div>
 </body>
 

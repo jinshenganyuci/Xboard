@@ -1,0 +1,6 @@
+button.xb-external-health{display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box;width:22px;height:22px;margin:-8px;padding:0;border:0;border-radius:50%;background:transparent;cursor:help;touch-action:manipulation}
+button.xb-external-health:focus-visible{outline:2px solid #64748b;outline-offset:1px}
+.xb-external-health-dot{display:block;width:6px;height:6px;border-radius:50%;background:#94a3b8}
+.xb-external-health[data-health="online"] .xb-external-health-dot{background:#3b82f6}
+.xb-external-health[data-health="offline"] .xb-external-health-dot{background:#ef4444}
+.xb-external-health-tip{position:fixed;z-index:2147483000;box-sizing:border-box;max-width:calc(100vw - 16px);padding:7px 10px;border-radius:6px;background:#27272a;color:#fff;box-shadow:0 3px 12px #0003;font:12px/1.5 system-ui,sans-serif;white-space:pre-line;pointer-events:none}

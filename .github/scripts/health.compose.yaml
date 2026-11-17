@@ -1,0 +1,36 @@
+# Disposable release test. The synthetic upstream and HTTPS targets are reachable
+# only on this private Docker network. Do not mount any production data here.
+services:
+  xboard:
+    image: ${XBOARD_HEALTH_TEST_IMAGE:?Set the candidate image reference}
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    cpus: 2
+    pids_limit: 256
+    networks:
+      isolated:
+        ipv4_address: 11.254.233.2
+    extra_hosts:
+      www.gstatic.com: 11.254.233.2
+      cp.cloudflare.com: 11.254.233.2
+    environment:
+      ENABLE_SQLITE: 'true'
+      ENABLE_REDIS: 'true'
+      RESOURCE_PROFILE: minimal
+      ENABLE_HORIZON: 'false'
+      ENABLE_WS_SERVER: 'false'
+      ENABLE_EXTERNAL_SUBSCRIPTIONS_SYNC: 'false'
+      docker: 'true'
+      ADMIN_ACCOUNT: health-test@example.invalid
+    entrypoint: ['/bin/sh', '-ec']
+    command:
+      - |
+        php /www/artisan xboard:install --no-interaction >/tmp/test-install.log 2>&1
+        grep -qE '^INSTALLED=(1|true)$$' /www/.env
+        exec /entrypoint.sh /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+networks:
+  isolated:
+    internal: true
+    ipam:
+      config:
+        - subnet: 11.254.233.0/24

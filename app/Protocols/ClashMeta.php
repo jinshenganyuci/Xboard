@@ -10,7 +10,7 @@ use App\Support\AbstractProtocol;
 
 class ClashMeta extends AbstractProtocol
 {
-    public $flags = ['meta', 'verge', 'flclash', 'nekobox', 'clashmetaforandroid'];
+    public $flags = ['meta', 'mihomo', 'verge', 'flclash', 'nekobox', 'clashmetaforandroid'];
     const CUSTOM_TEMPLATE_FILE = 'resources/rules/custom.clashmeta.yaml';
     const CUSTOM_CLASH_TEMPLATE_FILE = 'resources/rules/custom.clash.yaml';
     const DEFAULT_TEMPLATE_FILE = 'resources/rules/default.clash.yaml';
@@ -141,6 +141,18 @@ class ClashMeta extends AbstractProtocol
         ],
     ];
 
+    protected function isCompatible($server)
+    {
+        // Only these names report the Mihomo core's version; application
+        // wrappers such as Verge have an unrelated version scale.
+        if (!empty($server['external']) && $server['type'] === Server::TYPE_ANYTLS
+            && in_array($this->clientName, ['mihomo', 'meta'], true) && !empty($this->clientVersion)
+            && version_compare($this->clientVersion, '1.19.3', '<')) {
+            return false;
+        }
+        return parent::isCompatible($server);
+    }
+
     public function handle()
     {
         $servers = $this->servers;
@@ -150,6 +162,35 @@ class ClashMeta extends AbstractProtocol
         $template = subscribe_template('clashmeta');
 
         $config = Yaml::parse($template);
+        if ($this->externalOnly && $servers === []) {
+            // Do not retain template proxies, groups, DNS detours or direct rules
+            // after the final external node disappears.
+            $config = array_intersect_key($config, array_flip([
+                'port', 'socks-port', 'mixed-port', 'redir-port', 'tproxy-port', 'tun',
+                'allow-lan', 'bind-address', 'ipv6', 'log-level', 'authentication',
+                'skip-auth-prefixes', 'lan-allowed-ips', 'lan-disallowed-ips',
+            ]));
+            if (isset($config['tun']) && is_array($config['tun'])) {
+                // Keep traffic capture active, but remove provider references
+                // after discarding the previous template's rule-providers.
+                unset($config['tun']['route-address-set'], $config['tun']['route-exclude-address-set']);
+            }
+            if (!isset($config['port']) && !isset($config['socks-port']) && !isset($config['mixed-port'])) {
+                $config['mixed-port'] = 7890;
+            }
+            $config['mode'] = 'rule';
+            $config['proxies'] = [];
+            $config['proxy-groups'] = [];
+            $config['rules'] = ['MATCH,REJECT'];
+            return $this->configResponse($config, $appName);
+        }
+        $reservedNames = ['DIRECT', 'REJECT', 'REJECT-DROP', 'COMPATIBLE', 'PASS', 'PASS-RULE', 'GLOBAL'];
+        foreach (array_merge($config['proxies'] ?? [], $config['proxy-groups'] ?? []) as $item) {
+            if (isset($item['name'])) {
+                $reservedNames[] = $item['name'];
+            }
+        }
+        $servers = $this->uniqueExternalNames($servers, $reservedNames, $appName);
         $proxy = [];
         $proxies = [];
 
@@ -224,13 +265,51 @@ class ClashMeta extends AbstractProtocol
         $config['proxy-groups'] = array_values($config['proxy-groups']);
         $config = $this->buildRules($config);
 
+        return $this->configResponse($config, $appName);
+    }
+
+    private function configResponse(array $config, string $appName)
+    {
         $yaml = Yaml::dump($config, 2, 4, Yaml::DUMP_EMPTY_ARRAY_AS_SEQUENCE);
         $yaml = str_replace('$app_name', admin_setting('app_name', 'XBoard'), $yaml);
         return response($yaml)
             ->header('content-type', 'text/yaml')
-            ->header('subscription-userinfo', "upload={$user['u']}; download={$user['d']}; total={$user['transfer_enable']}; expire={$user['expired_at']}")
+            ->header('subscription-userinfo', $this->subscriptionUserInfo())
             ->header('profile-update-interval', '24')
             ->header('content-disposition', 'attachment;filename*=UTF-8\'\'' . rawurlencode($appName));
+    }
+
+    private function uniqueExternalNames(array $servers, array $reservedNames, string $appName): array
+    {
+        // Names share a namespace with template groups and built-ins. Compare
+        // their final spelling because this exporter substitutes $app_name.
+        $renderName = fn (string $name) => str_replace('$app_name', $appName, $name);
+        $used = array_fill_keys(array_map($renderName, $reservedNames), true);
+        $originalNames = [];
+        foreach ($servers as $server) {
+            $name = $renderName($server['name']);
+            $originalNames[$name] = true;
+            if (empty($server['external'])) {
+                $used[$name] = true;
+            }
+        }
+        foreach ($servers as &$server) {
+            if (empty($server['external'])) {
+                continue;
+            }
+            $baseName = $server['name'];
+            if (isset($used[$renderName($baseName)])) {
+                $suffix = 2;
+                do {
+                    $server['name'] = $baseName . ' #' . $suffix++;
+                    $name = $renderName($server['name']);
+                } while (isset($used[$name]) || isset($originalNames[$name]));
+            }
+            $used[$renderName($server['name'])] = true;
+        }
+        unset($server);
+
+        return $servers;
     }
 
     /**
@@ -421,6 +500,9 @@ class ClashMeta extends AbstractProtocol
             'tls' => false
         ];
 
+        if (!empty($server['external']) && array_key_exists('packet_encoding', $protocol_settings)) {
+            $array['packet-encoding'] = $protocol_settings['packet_encoding'];
+        }
         switch (data_get($protocol_settings, 'tls')) {
             case 1:
                 $array['tls'] = true;
@@ -507,6 +589,10 @@ class ClashMeta extends AbstractProtocol
 
         self::appendMultiplex($array, $protocol_settings);
 
+        if ($alpn = data_get($protocol_settings, 'tls_settings.alpn')) {
+            $array['alpn'] = (array) $alpn;
+        }
+
         return $array;
     }
 
@@ -583,6 +669,10 @@ class ClashMeta extends AbstractProtocol
                 break;
         }
 
+        if ($alpn = data_get($protocol_settings, 'tls_settings.alpn')) {
+            $array['alpn'] = (array) $alpn;
+        }
+
         return $array;
     }
 
@@ -623,6 +713,10 @@ class ClashMeta extends AbstractProtocol
                     $array['obfs-password'] = data_get($protocol_settings, 'obfs.password');
                 }
                 break;
+        }
+
+        if ($alpn = data_get($protocol_settings, 'tls.alpn')) {
+            $array['alpn'] = (array) $alpn;
         }
 
         return $array;
@@ -681,6 +775,14 @@ class ClashMeta extends AbstractProtocol
             $array['skip-cert-verify'] = (bool) $allowInsecure;
         }
         self::appendEch($array, data_get($protocol_settings, 'tls.ech'));
+
+        if (!empty($server['external'])) {
+            $array['skip-cert-verify'] = (bool) data_get($protocol_settings, 'tls.allow_insecure', false);
+            if ($alpn = data_get($protocol_settings, 'tls.alpn')) {
+                $array['alpn'] = (array) $alpn;
+            }
+            self::appendUtls($array, $protocol_settings);
+        }
 
         return $array;
     }

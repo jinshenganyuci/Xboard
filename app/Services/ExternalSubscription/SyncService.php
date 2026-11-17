@@ -1,0 +1,85 @@
+<?php
+
+namespace App\Services\ExternalSubscription;
+
+use App\Models\ExternalSubscription;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use RuntimeException;
+use Throwable;
+
+class SyncService
+{
+    public function __construct(private Fetcher $fetcher, private Parser $parser)
+    {
+    }
+
+    public function sync(ExternalSubscription $source): array
+    {
+        $lock = Cache::lock('external-subscription:' . $source->id, 120);
+        if (!$lock->get()) {
+            throw new RuntimeException('该订阅正在同步或编辑，请稍后重试。');
+        }
+        $snapshot = null;
+        try {
+            $snapshot = $source->fresh();
+            if (!$snapshot) {
+                throw new RuntimeException();
+            }
+            $nodes = $this->parser->parse($this->fetcher->fetch($snapshot->url));
+            return DB::transaction(function () use ($snapshot, $nodes) {
+                $current = ExternalSubscription::whereKey($snapshot->id)->lockForUpdate()->first();
+                if (!$current || $current->getRawOriginal('url') !== $snapshot->getRawOriginal('url') || $current->getRawOriginal('updated_at') !== $snapshot->getRawOriginal('updated_at')) {
+                    throw new RuntimeException();
+                }
+                $existing = $current->nodes()->get()->keyBy('fingerprint');
+                $counts = ['total' => count($nodes), 'supported' => 0, 'unsupported' => 0, 'added' => 0, 'updated' => 0, 'removed' => 0];
+                $seen = [];
+                foreach ($nodes as $position => $data) {
+                    $seen[] = $data['fingerprint'];
+                    $node = $existing->get($data['fingerprint']);
+                    if (!$node) {
+                        $node = $current->nodes()->make(['selected' => false]);
+                        $counts['added']++;
+                    } else {
+                        // Compare the actual serialized content, not ciphertext
+                        // or PHP's loose equality (which conflates numeric passwords).
+                        $configChanged = json_encode($node->config, JSON_THROW_ON_ERROR) !== json_encode($data['config'], JSON_THROW_ON_ERROR);
+                        if (!$node->present || $node->supported !== $data['supported'] || $configChanged) {
+                            $current->nodes()->whereKey($node->id)->update(HealthService::invalidatedAttributes());
+                        } else {
+                            // Encryption uses a random IV: don't rewrite unchanged
+                            // plaintext or invalidate a probe on every feed refresh.
+                            unset($data['config']);
+                        }
+                        // Older releases retained absent rows and their selection. A
+                        // returning node must be reviewed again, just like a new one.
+                        if (!$node->present) {
+                            $node->selected = false;
+                        }
+                        $counts['updated']++;
+                    }
+                    $node->fill($data + ['present' => true, 'sort_order' => $position]);
+                    $node->save();
+                    $counts[$data['supported'] ? 'supported' : 'unsupported']++;
+                }
+                // A successful response is the complete snapshot, including an
+                // empty one. Also remove absent rows left by earlier releases.
+                $counts['removed'] = $current->nodes()->whereNotIn('fingerprint', $seen)->delete();
+                $current->forceFill(['last_synced_at' => now(), 'last_error' => null])->save();
+                return $counts;
+            });
+        } catch (Throwable $e) {
+            $message = '同步失败，请检查订阅地址、网络和内容格式；上次成功结果已保留。';
+            if ($snapshot) {
+                ExternalSubscription::whereKey($snapshot->id)
+                    ->where('url', $snapshot->getRawOriginal('url'))
+                    ->where('updated_at', $snapshot->getRawOriginal('updated_at'))
+                    ->update(['last_error' => $message]);
+            }
+            throw new RuntimeException($message);
+        } finally {
+            $lock->release();
+        }
+    }
+}

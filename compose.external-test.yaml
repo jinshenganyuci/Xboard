@@ -1,0 +1,50 @@
+# Local development only. Start the Docker VM with a 2 GiB memory ceiling.
+# The bind mount runs this checkout, not the upstream application's image code.
+name: xboard-external-test
+services:
+  xboard:
+    image: ghcr.io/cedar2025/xboard@sha256:896e4926e0d7f18d223d58770590c74ab6f05ecb21f1b74ef5357ed20f44c676
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    cpus: 2
+    pids_limit: 256
+    ulimits:
+      core: 0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${XBOARD_TEST_PORT:-17001}:7001"
+    volumes:
+      - .:/www
+      - dependencies:/www/vendor
+      - redis-data:/data
+      - ./.docker/entrypoint.sh:/entrypoint.sh:ro
+      - ./.docker/supervisor/supervisord.conf:/etc/supervisor/conf.d/supervisord.conf:ro
+      - ./.docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./.docker/php/zz-xboard.ini:/usr/local/etc/php/conf.d/zz-xboard.ini:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command: ["/usr/bin/supervisord", "-c", "/www/.docker/external-test/supervisord.conf"]
+    environment:
+      APP_ENV: production
+      RESOURCE_PROFILE: minimal
+      ENABLE_WEB: "true"
+      ENABLE_CADDY: "true"
+      ENABLE_REDIS: "true"
+      ENABLE_HORIZON: "true"
+      ENABLE_WS_SERVER: "false"
+      OCTANE_WORKERS: "1"
+      OCTANE_TASK_WORKERS: "1"
+      HORIZON_DATA_PIPELINE_MAX: "1"
+      HORIZON_BUSINESS_MAX: "1"
+      HORIZON_NOTIFICATION_MAX: "1"
+      HORIZON_WORKER_MEMORY_MB: "128"
+      docker: "true"
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1',7001) ? 0 : 1);"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  dependencies:
+  redis-data:
