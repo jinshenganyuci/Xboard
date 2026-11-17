@@ -33,4 +33,3 @@ compose.host.yaml
 compose.split.yaml
 .scribe
 .phpunit.cache/
-/public/assets/node-dns/admin-dns-v1.js

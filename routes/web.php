@@ -2,7 +2,6 @@
 
 use App\Services\ThemeService;
 use App\Support\DefaultThemeHealthAsset;
-use App\Support\AdminDnsAsset;
 use App\Services\UpdateService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -87,30 +86,12 @@ Route::get(DefaultThemeHealthAsset::URL, static function () {
     ]);
 });
 
-Route::get(AdminDnsAsset::URL, static function () {
-    $path = public_path(ltrim(AdminDnsAsset::SOURCE, '/'));
-    abort_unless(AdminDnsAsset::isStockFile($path), 404);
-    return response(AdminDnsAsset::compile(file_get_contents($path)), 200, [
-        'Content-Type' => 'text/javascript; charset=utf-8',
-        'Cache-Control' => 'public, max-age=31536000, immutable',
-        'X-Content-Type-Options' => 'nosniff',
-    ]);
-});
-
 // The page contains no private data; all source/node requests require admin API authentication.
 Route::get('/' . admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))) . '/external-subscriptions', function () {
     $securePath = admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key'))));
     return response()->view('admin.external-subscriptions', [
         'title' => admin_setting('app_name', 'XBoard'),
         'secure_path' => $securePath,
-    ])->header('Cache-Control', 'no-store')->header('Referrer-Policy', 'same-origin');
-});
-
-// Empty shell only; the DNS settings data is fetched using authenticated admin APIs.
-Route::get('/' . admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))) . '/dns-settings', function () {
-    return response()->view('admin.dns-settings', [
-        'title' => admin_setting('app_name', 'XBoard'),
-        'secure_path' => admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))),
     ])->header('Cache-Control', 'no-store')->header('Referrer-Policy', 'same-origin');
 });
 

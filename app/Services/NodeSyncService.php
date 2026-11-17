@@ -156,7 +156,7 @@ class NodeSyncService
                 'data' => $data,
             ]));
         } catch (\Throwable $e) {
-            Log::warning('[NodePush] Redis publish failed.', [
+            Log::warning("[NodePush] Redis publish failed: {$e->getMessage()}", [
                 'node_id' => $nodeId,
                 'event' => $event,
             ]);
@@ -175,7 +175,7 @@ class NodeSyncService
                 'data' => $data,
             ]));
         } catch (\Throwable $e) {
-            Log::warning('[NodePush] Redis machine publish failed.', [
+            Log::warning("[NodePush] Redis machine publish failed: {$e->getMessage()}", [
                 'machine_id' => $machineId,
                 'event' => $event,
             ]);

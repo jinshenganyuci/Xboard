@@ -1,8 +1,0 @@
-.xb-node-dns-panel{display:grid;gap:10px;margin:16px 0;padding:16px;border:1px solid hsl(var(--border));border-radius:10px;background:hsl(var(--muted)/.35);font-size:12px;line-height:1.65}
-.xb-node-dns-panel p{margin:0;color:hsl(var(--muted-foreground))}
-.xb-node-dns-choice{display:flex;gap:9px;align-items:center;font-weight:600;cursor:pointer}
-.xb-node-dns-choice input{width:16px;height:16px;accent-color:hsl(var(--primary))}
-.xb-node-dns-choice input:disabled{cursor:not-allowed}
-.xb-node-dns-panel a{color:hsl(var(--primary));text-decoration:underline;text-underline-offset:3px;justify-self:start}
-.xb-node-dns-summary{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:0}
-.xb-node-dns-summary dt{color:hsl(var(--muted-foreground))}.xb-node-dns-summary dd{margin:0;overflow-wrap:anywhere}

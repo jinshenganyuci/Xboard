@@ -8,7 +8,6 @@ use App\Http\Requests\Admin\ServerSave;
 use App\Models\Server;
 use App\Models\ServerGroup;
 use App\Services\ServerService;
-use App\Services\GlobalDnsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -58,22 +57,20 @@ class ManageController extends Controller
             if (!$server) {
                 return $this->fail([400202, '服务器不存在']);
             }
-            $params = app(GlobalDnsService::class)->normalizeNode($params, $server);
             try {
                 $server->update($params);
                 return $this->success(true);
             } catch (\Exception $e) {
-                Log::error('Node settings update failed.', ['node_id' => $server->id]);
+                Log::error($e);
                 return $this->fail([500, '保存失败']);
             }
         }
 
-        $params = app(GlobalDnsService::class)->normalizeNode($params);
         try {
             Server::create($params);
             return $this->success(true);
         } catch (\Exception $e) {
-            Log::error('Node settings creation failed.');
+            Log::error($e);
             return $this->fail([500, '创建失败']);
         }
     }
@@ -279,17 +276,12 @@ class ManageController extends Controller
             return $this->fail([400202, '服务器不存在']);
         }
 
-        try {
-            $copiedServer = $server->replicate();
-            $copiedServer->show = 0;
-            $copiedServer->code = null;
-            $copiedServer->u = 0;
-            $copiedServer->d = 0;
-            $copiedServer->save();
-        } catch (\Throwable) {
-            Log::error('Node settings copy failed.', ['node_id' => $server->id]);
-            return $this->fail([500, '复制节点失败']);
-        }
+        $copiedServer = $server->replicate();
+        $copiedServer->show = 0;
+        $copiedServer->code = null;
+        $copiedServer->u = 0;
+        $copiedServer->d = 0;
+        $copiedServer->save();
 
         return $this->success(true);
     }

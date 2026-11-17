@@ -3,7 +3,6 @@ namespace App\Http\Routes\V2;
 
 use App\Http\Controllers\V2\Admin\ConfigController;
 use App\Http\Controllers\V2\Admin\ExternalSubscriptionController;
-use App\Http\Controllers\V2\Admin\GlobalDnsController;
 use App\Http\Controllers\V2\Admin\MailTemplateController;
 use App\Http\Controllers\V2\Admin\PlanController;
 use App\Http\Controllers\V2\Admin\Server\GroupController;
@@ -32,11 +31,6 @@ class AdminRoute
             'prefix' => admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))),
             'middleware' => ['admin', 'log'],
         ], function ($router) {
-            $router->group(['prefix' => 'dns-settings'], function ($router) {
-                $router->get('/fetch', [GlobalDnsController::class, 'fetch']);
-                $router->post('/save', [GlobalDnsController::class, 'save']);
-            });
-
             $router->group(['prefix' => 'external-subscription'], function ($router) {
                 $router->get('/fetch', [ExternalSubscriptionController::class, 'fetch']);
                 $router->post('/save', [ExternalSubscriptionController::class, 'save']);

@@ -2,7 +2,7 @@
 
 本功能让 Xboard 从第三方订阅读取节点，由管理员勾选后，通过用户原有的 Xboard 订阅地址下发。无需为这些节点部署 Xboard 服务端。
 
-开发接手先读仓库根目录的 [AGENTS.md](../../../AGENTS.md)，再读[开发、测试与发布交接](cloud-development.md)。本文侧重第三方订阅、管理操作和已有站点的升级方式。自建节点的 Cloudflare 等 DNS-01 参数复用见[全局 DNS 证书配置](node-dns.md)。
+开发接手先读仓库根目录的 [AGENTS.md](../../../AGENTS.md)，再读[云端开发、测试与发布交接](cloud-development.md)。本文侧重功能、管理操作和已有站点的升级方式。
 
 ## 适用范围
 
@@ -64,13 +64,13 @@ php artisan external-subscriptions:sync
 
 离线只影响面板显示。下发仍以勾选、上游是否存在、格式及用户资格为准。已有站点升级由镜像启动流程迁移第三方节点表并添加检测字段；请保留原数据库和 `.env`。在 Compose 环境设置 `ENABLE_EXTERNAL_SUBSCRIPTIONS_HEALTH=false` 并重建容器可关闭定时测活。
 
-## 镜像升级与 Debian Compose 测试
+## 本地 Docker Compose 测试
 
 ### 已有站点使用发布镜像
 
-发布版本使用独立标签，历史 `ghcr.io/jinshenganyuci/xboard:external-v1.0.6` 支持 Linux AMD64 和 ARM64。`latest` 是可变标签，升级前核对本次发布的实际源码、digest 和验收结果，不能把历史版本当作包含新增全局 DNS 功能的镜像。首次发布若镜像为私有，需要在 GitHub Packages 设置中设为 Public 才能匿名拉取。
+发布版本使用独立标签，例如 `ghcr.io/jinshenganyuci/xboard:external-v1.0.6`，支持 Linux AMD64 和 ARM64。发布任务通过启动及订阅检查后会将 `ghcr.io/jinshenganyuci/xboard:latest` 更新为同一镜像。先确认 GitHub Actions 的对应发布任务成功；首次发布若镜像为私有，需要在 GitHub Packages 设置中将镜像设为 Public，才能匿名拉取。
 
-升级前停止容器并备份 `.env`、SQLite 数据目录（包括仍存在的 WAL/SHM）、主题、插件及 Redis 数据。已有站点只替换 Compose 的 `image`，保留所有原有数据挂载和 `APP_KEY`，然后执行：
+升级前停止容器并备份 `.env`、SQLite 数据目录（包括仍存在的 WAL/SHM）、主题、插件及 Redis 数据卷。已有站点只替换 Compose 的 `image`，保留所有原有挂载和 `APP_KEY`，然后执行：
 
 ```bash
 docker compose pull xboard
@@ -78,42 +78,114 @@ docker compose up -d --force-recreate xboard
 docker compose logs --tail=100 xboard
 ```
 
-首次升级会新增第三方订阅的两张表，`external-v1.0.5` 另有四个测活字段及到期索引；v1.0.6 AnyTLS / 延迟版本追加可空的 `health_latency_ms` 字段。全局 DNS 功能只新增 `global_dns_settings` 表及空配置行，不更改旧节点。镜像启动流程执行迁移，无需重装或再次运行安装命令。打开原后台检查第三方订阅和全局 DNS 页面能加载；升级本身不会自动把旧节点改为全局 DNS。
-
-回退保留新增表和字段，不执行 `migrate:rollback` 或 `xboard:rollback`。旧版可能缺少完整 AnyTLS 适配；旧镜像也不能解析全局 DNS 的 `use_global_dns` 引用。已经改绑全局的节点应先在新版本中恢复完整独立参数，或使用升级前的一致备份，再回退固定镜像。不能承诺只换回任意旧镜像就能正常运行。详见 [DNS 升级与回退](node-dns.md#升级与回退)。
+首次升级会新增第三方订阅的两张表，`external-v1.0.5` 还会在第三方节点表中新增四个测活字段及到期索引。本次 AnyTLS / 延迟版本另追加可空的 `health_latency_ms` 字段，原记录不变。启动流程会执行迁移，不要再次运行安装命令。打开原后台并检查第三方订阅页面能加载。回退时使用升级前记录的固定镜像并重建容器，保留数据库中的新增表和字段；不要执行 `migrate:rollback` 或 `xboard:rollback`。旧版没有完整的第三方 AnyTLS 适配，回退后不能保证这些节点正确下发。曾经验证过的上游运行时不代表任意历史版本都兼容，修改迁移或基础镜像后应重新使用脱敏副本验证升级与回退。
 
 镜像版本通过 OCI 标签和镜像 digest 标识，应用内原上游版本信息可能仍显示基础版本。此发布方式统一通过 Compose 换镜像升级，不使用后台源码更新按钮或 `update.sh`。
 
-`Dockerfile.external` 在固定官方运行时上覆盖功能代码，不重新解析或升级 Composer 依赖。专用 Dockerignore 只允许打包需要的源码目录；`.env`、数据库、日志和测试凭据不进入构建上下文。若修改 Composer 依赖，需要先更新运行时和兼容性验证。历史 `external-v*` 标签会触发 Actions 上传；当前用户要求 GitHub 推送和镜像上传统一由 Debian 完成，未协调发布机制前不要推送这类触发标签，也不要因测试通过自动发布。
+发布流程由 `external-v*` Git 标签触发，使用 `Dockerfile.external` 在已验证的官方运行时上覆盖功能代码，不重新解析或升级 Composer 依赖。专用 Dockerignore 只允许打包需要的源码目录；本地 `.env`、数据库、日志和订阅测试凭据不进入构建上下文。若后续修改 Composer 依赖，需要先更新运行时和兼容性验证，发布工作流会拒绝直接复用旧依赖。
 
-### 开发与测试环境
+### 开发测试实例
 
-Mac 负责源码编辑、轻量语法检查和查看结果；Docker 构建、完整测试及预览服务在 Debian 编译虚拟机的本任务目录中运行。不启动 Mac Colima，不在虚拟化宿主机编译。按用户全局规范核验机器和任务归属，复用依赖缓存，记录代码版本、日志及资源。
+`compose.external-test.yaml` 用于独立本地测试。它绑定当前源码，采用 SQLite，所有服务合在一个容器内运行，并仅发布到 `127.0.0.1:17001`。
 
-历史 `compose.external-test.yaml` 绑定源码、使用官方镜像，缺少发布镜像中的独立探测配置，并包含命名卷；不能用于证明当前发布镜像已通过，也不能作为新的 Compose 交付模板。新交付 Compose 的所有持久化目录都应绑定到根 Compose 同目录的 `./` 路径，例如 `./data`、`./redis` 和 `./storage`，不得使用命名卷、匿名卷或目录外路径。迁移现有数据时保留原内容、属主和权限。
+这个 Compose 使用原官方镜像并挂载源码，没有打包 `Dockerfile.external` 新增的 sing-box 与独立测活 worker。它适合 PHP/API 开发，不能单独证明发布镜像的自动同步、小时测活服务正常。完整镜像和真实协议验收使用[云端交接文档](cloud-development.md)中的候选镜像测试。
 
-本项目 Docker 测试总内存不得超过 2 GiB。DNS 升级夹具的单容器 `mem_limit` / `memswap_limit` 均为 `1536m`；构建、安装和运行测试错开，不同时保留多套运行实例。检查内存和 OOM，不把资源上限当成实际用量。
+内存限制分两层：
 
-### 测试入口
+| 范围 | 配置 |
+| --- | --- |
+| Docker 虚拟机 | 总内存设为 2 GiB |
+| Xboard 测试容器 | `mem_limit: 1536m`、`memswap_limit: 1536m` |
 
-第三方功能的 PHPUnit、默认用户主题浏览器、管理页浏览器和真实四协议 Compose 测试命令见[开发交接](cloud-development.md#测试入口与覆盖范围)。完整测试使用独立 `.docker/.data/testing.sqlite`、合成 `APP_KEY`、Redis DB 14/15 和测试前缀；测试会重建表，禁止连接生产数据或业务 Redis。
+Docker Desktop 用户在资源设置中将内存设为 2 GiB。使用 Colima 时可创建专用测试实例，例如 `colima start --profile xboard-test --memory 2 --cpu 2`，并让后续 Docker 命令使用对应 context。不要同时运行其他测试容器；安装依赖和初始化用的一次性容器也应在正式测试容器启动前运行。不要为了运行此测试覆盖现有生产环境的 `.env` 或数据库。
 
-全局 DNS 相关测试见 [DNS 测试入口](node-dns.md#测试入口)：
+### 全新测试实例
 
-- `tests/Unit/NodeDns/`、`tests/Feature/NodeDns/` 已纳入 `phpunit.external.xml`。
-- `tests/browser/node-dns-settings.cjs` 使用实际设置页资产与合成接口。
-- `tests/browser/node-dns-form.cjs` 使用实际生成的原后台 React bundle。
-- `.github/scripts/run-node-dns-upgrade.sh` 从固定旧镜像建立一次性合成旧站，使用同一挂载升级为候选镜像并再次重建，核对自动迁移和持久化；不是生产降级工具。
+在一个全新的 checkout 中执行：
 
-浏览器与配置下发测试不验证真实 Cloudflare Token 或 ACME 签发。测试通过范围以本任务实际日志为准，不能套用历史测试数或镜像结果。
+```bash
+git submodule update --init --recursive
+mkdir -p .docker/.data
+touch .env
 
-为用户交付预览时，服务由 Debian 持续托管，提供完整、已从 Mac 访问验证的局域网地址。无需向用户交付的隔离测试无需暴露业务端口。用户仍在查看预览时保留服务，确认结束后再清理。
+docker compose -f compose.external-test.yaml pull
+
+docker compose -f compose.external-test.yaml run --rm --no-deps \
+  -e CACHE_DRIVER=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array \
+  -e COMPOSER_MEMORY_LIMIT=768M --entrypoint sh xboard -lc \
+  'composer install --no-dev --prefer-dist --no-interaction --no-scripts && php artisan package:discover --ansi'
+
+docker compose -f compose.external-test.yaml run --rm --no-deps \
+  -e ENABLE_SQLITE=true -e ENABLE_REDIS=true \
+  -e ADMIN_ACCOUNT=admin@example.com xboard php artisan xboard:install
+
+docker compose -f compose.external-test.yaml up -d
+```
+
+安装命令生成管理员密码和后台安全路径，请自行保存。`admin@example.com` 是示例，安装时替换成自己的管理员邮箱。安装生成的 `.env` 中 SQLite 路径应是项目相对路径 `.docker/.data/database.sqlite`，内置 Redis 使用 `/data/redis.sock`。
+
+访问 `http://127.0.0.1:17001/{安装输出的后台安全路径}`。测试页入口就在后台顶部。修改宿主机监听端口时，可设置 `XBOARD_TEST_PORT`；默认不对局域网或公网开放。
+
+检查运行与内存：
+
+```bash
+docker compose -f compose.external-test.yaml ps
+docker compose -f compose.external-test.yaml logs --tail=80 xboard
+docker stats --no-stream
+```
+
+测试容器按 1536 MiB 硬上限运行，不等于始终占用这些内存；Docker VM 的 2 GiB 上限负责约束整个虚拟机。若资源不足，应减少其他负载，而不是增加这里的上限。
+
+### 更新已有测试实例
+
+先备份 `.env` 和 SQLite 数据库，再更新源码及子模块。不要重复执行初始化安装命令。
+
+```bash
+docker compose -f compose.external-test.yaml stop
+
+docker compose -f compose.external-test.yaml run --rm --no-deps \
+  -e CACHE_DRIVER=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array \
+  xboard php artisan migrate --force
+
+docker compose -f compose.external-test.yaml up -d
+```
+
+Octane 是常驻进程。修改 PHP 代码后需要重启测试容器或重新加载 Octane，避免仍执行旧代码。
 
 ### 测试结束与清理
 
-先保存必要日志、报告和截图到 Debian 本任务永久产物目录，验证可读并更新 `task.json`。然后只删除本次一次性容器、网络、临时证书、测试数据及明确不再需要的候选镜像；原有服务、用户数据、其他任务资源和共享缓存保留。不要执行无范围的 `docker system prune`。
+只删除本次新建的一次性测试容器、网络、数据卷、候选镜像、构建缓存和临时证书，不清理用户原有演示实例的数据或其他项目。`run-health-smoke.sh` 会通过退出钩子清理自己的 Compose 项目和临时证书；异常终止后仍需检查残留。不要对共享 Docker 环境执行无范围的 `docker system prune`。
 
-`run-health-smoke.sh` 会清理自己的 Compose 项目及临时证书；DNS 升级脚本清理容器和网络，保留任务目录中的数据和日志等待归档。失败或中断后仍须复核资源，不把退出钩子启动等同于清理完成。当前流程不使用 Colima；文档里的 v1.0.6 Colima 记录仅说明历史结果。
+本项目的 Mac 本地测试要求 Docker 虚拟机总内存不超过 2 GiB，测试完成后关闭本次启动的 Colima 实例，并确认没有本任务遗留的运行实例。例如使用专用 `xboard-test` profile 时，完成容器清理后执行：
+
+```bash
+colima stop --profile xboard-test
+colima list
+```
+
+用户要求保留的演示实例可以保留停止状态和数据，不能以保留演示实例为由让 Colima 继续占用内存。
+
+## 自动化测试
+
+测试依赖 PHPUnit 等 Composer 开发依赖。正式使用无需保留这些依赖；验收时在一次性测试环境中安装，先停止常驻测试容器，保持总内存限制。
+
+```bash
+docker compose -f compose.external-test.yaml stop
+
+docker compose -f compose.external-test.yaml run --rm --no-deps \
+  -e CACHE_DRIVER=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array \
+  -e COMPOSER_MEMORY_LIMIT=768M --entrypoint sh xboard -lc \
+  'composer install --prefer-dist --no-interaction --no-scripts && php artisan package:discover --ansi'
+
+docker compose -f compose.external-test.yaml up -d
+
+docker compose -f compose.external-test.yaml exec xboard sh -lc \
+  'mkdir -p .docker/.data && touch .docker/.data/testing.sqlite && vendor/bin/phpunit -c phpunit.external.xml'
+```
+
+测试通过 `exec` 在同一个 1536 MiB 容器中执行，复用其内置 Redis，不另开运行中的测试容器。部分现有代码显式使用 Redis，因此不能在没有 Redis 的单独 Shell 容器里运行完整测试。
+
+`phpunit.external.xml` 强制使用独立的 `.docker/.data/testing.sqlite`、测试用加密密钥，以及隔离的 Redis DB 14/15 和测试 key 前缀。不要改成业务数据库路径或业务 Redis DB；测试会重建表。测试进程的环境覆盖不应写回 `.env`，常驻服务保持 `APP_ENV=production`。验收覆盖解析、同步保留、用户资格、凭据保留、管理员权限、勾选边界及响应/审计脱敏。真实节点是否能联网还需要单独进行客户端连接测试，不能由单元测试代替。
 
 ## 代码入口
 
